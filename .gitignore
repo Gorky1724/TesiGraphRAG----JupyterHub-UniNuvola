@@ -1,0 +1,43 @@
+# 1. Cartella dati (bloccata completamente)
+data/
+
+# 2. Ambienti virtuali
+.venv/
+tesi_env/
+*venv/
+env/
+
+# 3. Cache Python e Jupyter
+__pycache__/
+*.py[cod]
+.ipynb_checkpoints/
+.pytest_cache/
+
+# 4. Database vettoriali, DB locali e log
+qdrant_db/
+*.db
+*.sqlite
+logs/
+*.log
+
+# 5. Documenti, dataset e modelli pesanti
+*.pdf
+*.csv
+*.json
+*.parquet
+*.zip
+*.tar.gz
+*.txt
+*.pth
+*.bin
+*.safetensors
+*.gguf
+
+# 6. File sensibili e chiavi API
+.env
+.env.*
+
+# 7. File di sistema ed editor
+.DS_Store
+.vscode/
+.idea/
