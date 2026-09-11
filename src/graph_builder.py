@@ -4,18 +4,14 @@ class KnowledgeGraphBuilder:
     def __init__(self):
         self.graph = nx.Graph()
 
-    def build_graph(self, chunks, similarity_pairs):
-        """Popola il grafo NetworkX con nodi (chunk) ed archi (similarità/pesi)."""
-        self.graph.clear()
-        
-        for chunk in chunks:
-            chunk_id = getattr(chunk, 'id', str(chunk))
-            chunk_text = getattr(chunk, 'text', str(chunk))
-            self.graph.add_node(chunk_id, text=chunk_text, tags=[])
+    def add_chunk_node(self, chunk_id: str, text: str, tags: list = None):
+        self.graph.add_node(chunk_id, text=text, tags=tags or [])
 
-        for a, b, score in similarity_pairs:
-            self.graph.add_edge(a, b, weight=score)
+    def add_relation(self, source_id: str, target_id: str, weight: float = 1.0):
+        self.graph.add_edge(source_id, target_id, weight=weight)
 
     def to_json_data(self) -> dict:
-        """Esporta la struttura del grafo nel formato JSON per D3.js."""
-        return nx.node_link_data(self.graph)
+        data = nx.node_link_data(self.graph)
+        if "edges" in data and "links" not in data:
+            data["links"] = data.pop("edges")
+        return data
