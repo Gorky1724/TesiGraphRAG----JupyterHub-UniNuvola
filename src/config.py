@@ -24,3 +24,10 @@ QDRANT_URL = "http://localhost:6333"
 OLLAMA_URL = "http://localhost:11434"
 DEFAULT_KEEP_ALIVE = "2h"
 DEFAULT_NUM_THREAD = 4
+
+# ======================================================================
+# SELEZIONE COLLEZIONE QDRANT DA UTILIZZARE (solo UNA delle opzioni)
+# ======================================================================
+
+COLLECTION_NAME = "ds1_graphrag_chunks"
+#da cambiare se si dovesse utilizzare qualche altra collezione
