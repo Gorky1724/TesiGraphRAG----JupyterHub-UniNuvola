@@ -28,6 +28,7 @@ logs/
 *.zip
 *.tar.gz
 *.txt
+!requirements.txt
 *.pth
 *.bin
 *.safetensors

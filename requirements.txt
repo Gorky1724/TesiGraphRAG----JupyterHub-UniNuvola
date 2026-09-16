@@ -1,0 +1,14 @@
+ipykernel
+langchain
+langchain-community
+langchain-qdrant
+langchain-ollama
+langchain-text-splitters
+qdrant-client
+networkx
+anywidget
+ipywidgets
+python-dotenv
+pydantic
+fastapi
+uvicorn[standard]
