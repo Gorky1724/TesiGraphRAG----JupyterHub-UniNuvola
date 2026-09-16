@@ -4,6 +4,7 @@ langchain-community
 langchain-qdrant
 langchain-ollama
 langchain-text-splitters
+fastembed
 qdrant-client
 networkx
 anywidget
