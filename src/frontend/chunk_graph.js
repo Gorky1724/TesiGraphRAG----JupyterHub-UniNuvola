@@ -17,7 +17,20 @@ export function render({ model, el }) {
     .attr("height", height)
     .style("background", "#f8fafc")
     .style("border", "1px solid #cbd5e1")
-    .style("border-radius", "8px");
+    .style("border-radius", "8px")
+    .style("cursor", "grab");
+
+  // Contenitore SVG scalabile e traslabile
+  const g = svg.append("g");
+
+  // Gestore dello Zoom (rotella) e Pan (drag sullo sfondo)
+  const zoom = d3.zoom()
+    .scaleExtent([0.2, 4]) // Zoom da 20% a 400%
+    .on("zoom", (event) => {
+      g.attr("transform", event.transform);
+    });
+
+  svg.call(zoom);
 
   const infoBox = container.append("div")
     .style("position", "absolute")
@@ -37,7 +50,7 @@ export function render({ model, el }) {
     const graph = model.get("graph_data");
     if (!graph || !graph.nodes || graph.nodes.length === 0) return;
 
-    svg.selectAll("*").remove();
+    g.selectAll("*").remove();
 
     const nodes = graph.nodes.map(d => ({ ...d }));
     const links = graph.links ? graph.links.map(d => ({ ...d })) : [];
@@ -52,14 +65,14 @@ export function render({ model, el }) {
       .force("charge", d3.forceManyBody().strength(-180))
       .force("center", d3.forceCenter(width / 2, height / 2));
 
-    const link = svg.append("g")
+    const link = g.append("g")
       .selectAll("line")
       .data(links)
       .enter().append("line")
       .attr("stroke", "#94a3b8")
       .attr("stroke-width", 2);
 
-    const linkText = svg.append("g")
+    const linkText = g.append("g")
       .selectAll("text")
       .data(links)
       .enter().append("text")
@@ -68,7 +81,7 @@ export function render({ model, el }) {
       .attr("fill", "#0284c7")
       .attr("text-anchor", "middle");
 
-    const node = svg.append("g")
+    const node = g.append("g")
       .selectAll("circle")
       .data(nodes)
       .enter().append("circle")
@@ -76,9 +89,9 @@ export function render({ model, el }) {
       .attr("fill", "#6366f1")
       .attr("stroke", "#ffffff")
       .attr("stroke-width", 2)
-      .style("cursor", "grab");
+      .style("cursor", "pointer");
 
-    const label = svg.append("g")
+    const label = g.append("g")
       .selectAll("text")
       .data(nodes)
       .enter().append("text")
@@ -88,7 +101,6 @@ export function render({ model, el }) {
       .attr("dy", 4)
       .attr("fill", "#1e293b");
 
-    // Blocca permanentemente TUTTI i nodi appena il layout iniziale è pronto
     simulation.on("end", () => {
       nodes.forEach(n => {
         n.fx = n.x;
@@ -98,14 +110,12 @@ export function render({ model, el }) {
 
     const drag = d3.drag()
       .on("start", (event, d) => {
-        // Congela istantaneamente la posizione di tutti i nodi
         nodes.forEach(n => {
           n.fx = n.x;
           n.fy = n.y;
         });
       })
       .on("drag", (event, d) => {
-        // Aggiorna solo il nodo trascinato senza svegliare la fisica di D3
         d.fx = event.x;
         d.fy = event.y;
         d.x = event.x;
