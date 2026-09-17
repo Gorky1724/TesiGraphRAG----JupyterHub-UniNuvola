@@ -1,7 +1,7 @@
 import networkx as nx
 from src.config import HARD_FILTERING_THRESHOLD, BASE_DISTANCE_PX
 
-class GraphBuilder:
+class KnowledgeGraphBuilder:
     def __init__(self):
         self.graph = nx.Graph()
 

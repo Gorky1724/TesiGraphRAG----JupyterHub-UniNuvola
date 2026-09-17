@@ -3,9 +3,12 @@ import * as d3 from "https://esm.sh/d3@7";
 export function render({ model, el }) {
   el.innerHTML = "";
 
+  // Contenitore principale a colonna
   const container = d3.select(el)
     .append("div")
-    .style("position", "relative")
+    .style("display", "flex")
+    .style("flex-direction", "column")
+    .style("gap", "12px")
     .style("width", "650px")
     .style("font-family", "sans-serif");
 
@@ -14,6 +17,7 @@ export function render({ model, el }) {
 
   let selectedNodeId = null;
 
+  // Tela Canvas SVG
   const svg = container.append("svg")
     .attr("width", width)
     .attr("height", height)
@@ -25,7 +29,7 @@ export function render({ model, el }) {
   // Contenitore SVG scalabile e traslabile
   const g = svg.append("g");
 
-  // Gestore Zoom e Pan
+  // Gestore Zoom e Pan sul canvas SVG
   const zoom = d3.zoom()
     .scaleExtent([0.2, 4])
     .on("zoom", (event) => {
@@ -34,26 +38,25 @@ export function render({ model, el }) {
 
   svg.call(zoom);
 
+  // Box Informativo separato, posizionato sotto il grafico (non interferisce con Zoom/Pan)
   const infoBox = container.append("div")
-    .style("position", "absolute")
-    .style("top", "12px")
-    .style("right", "12px")
-    .style("width", "230px")
-    .style("padding", "10px")
-    .style("background", "rgba(255, 255, 255, 0.95)")
+    .style("width", "100%")
+    .style("box-sizing", "border-box")
+    .style("padding", "12px")
+    .style("background", "#ffffff")
     .style("border", "1px solid #cbd5e1")
-    .style("border-radius", "6px")
-    .style("font-size", "12px")
+    .style("border-radius", "8px")
+    .style("font-size", "13px")
     .style("color", "#334155")
-    .style("pointer-events", "none")
-    .style("box-shadow", "0 2px 4px rgba(0,0,0,0.05)")
+    .style("box-shadow", "0 1px 3px rgba(0,0,0,0.05)")
+    .style("max-height", "160px")
+    .style("overflow-y", "auto")
     .html("<b>📌 Info Chunk</b><br><span style='color:#94a3b8;'>Clicca un nodo per vederne testo e penalità</span>");
 
   function draw() {
     const graph = model.get("graph_data");
     if (!graph || !graph.nodes || graph.nodes.length === 0) return;
 
-    // Lettura dinamica della soglia inviata da Python (fallback a 2.5)
     const hardFilterThreshold = graph.hard_filter_threshold || 2.5;
 
     g.selectAll("*").remove();
@@ -61,7 +64,6 @@ export function render({ model, el }) {
     const nodes = graph.nodes.map(d => ({ ...d }));
     const links = graph.links ? graph.links.map(d => ({ ...d })) : [];
 
-    // Trova la penalità massima tra tutti gli archi incidenti sul nodo
     function getMaxPenalty(nodeId) {
       let maxPenalty = 1.0;
       links.forEach(l => {
@@ -75,7 +77,6 @@ export function render({ model, el }) {
       return maxPenalty;
     }
 
-    // Simulazione D3 basata su distanze da Qdrant * distance_factor
     const simulation = d3.forceSimulation(nodes)
       .force("link", d3.forceLink(links)
         .id(d => d.id)
@@ -120,7 +121,7 @@ export function render({ model, el }) {
     function updateNodeStyles() {
       node
         .attr("fill", d => {
-          if (d.id === selectedNodeId) return "#f59e0b"; // Giallo/Ambra = Selezionato
+          if (d.id === selectedNodeId) return "#f59e0b"; // Giallo = Selezionato
           const maxP = getMaxPenalty(d.id);
           if (maxP >= hardFilterThreshold) return "#ef4444"; // Rosso = Escluso
           if (maxP > 1.0) return "#f97316"; // Arancione = Penalizzato
@@ -162,6 +163,8 @@ export function render({ model, el }) {
         d.x = event.x;
         d.y = event.y;
 
+        // Aggregazione di tutti gli archi incidenti per la sincronizzazione batch
+        const edits = [];
         links.forEach(l => {
           const srcId = typeof l.source === 'object' ? l.source.id : l.source;
           const tgtId = typeof l.target === 'object' ? l.target.id : l.target;
@@ -175,14 +178,19 @@ export function render({ model, el }) {
 
             l.distance_factor = factor;
 
-            model.set("pairwise_edit", {
+            edits.push({
               chunk_1: srcId,
               chunk_2: tgtId,
               distance_factor: factor
             });
-            model.save_changes();
           }
         });
+
+        // Invio batch a Python in un'unica operazione
+        if (edits.length > 0) {
+          model.set("pairwise_edit", edits);
+          model.save_changes();
+        }
 
         updateNodeStyles();
         updatePositions();

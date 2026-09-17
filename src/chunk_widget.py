@@ -15,7 +15,8 @@ class ChunkGraphWidget(anywidget.AnyWidget):
 
     graph_data = traitlets.Dict({"nodes": [], "links": []}).tag(sync=True)
     selected_tag = traitlets.Dict({}).tag(sync=True)
-    pairwise_edit = traitlets.Dict({}).tag(sync=True)
+    # Supporta sia un dizionario singolo che una lista batch di modifiche
+    pairwise_edit = traitlets.Union([traitlets.Dict(), traitlets.List()]).tag(sync=True)
 
     def __init__(self, sidecar_path=None, **kwargs):
         super().__init__(**kwargs)
@@ -55,10 +56,15 @@ class ChunkGraphWidget(anywidget.AnyWidget):
         }
 
     def _on_pairwise_edit(self, change):
-        edit = change["new"]
-        if edit and "chunk_1" in edit and "chunk_2" in edit:
-            self.sidecar.save_pairwise_delta(
-                chunk_id_1=edit["chunk_1"],
-                chunk_id_2=edit["chunk_2"],
-                distance_factor=edit["distance_factor"]
-            )
+        edits = change["new"]
+        if isinstance(edits, dict):
+            edits = [edits]
+
+        if isinstance(edits, list):
+            for edit in edits:
+                if edit and "chunk_1" in edit and "chunk_2" in edit:
+                    self.sidecar.save_pairwise_delta(
+                        chunk_id_1=edit["chunk_1"],
+                        chunk_id_2=edit["chunk_2"],
+                        distance_factor=edit["distance_factor"]
+                    )
