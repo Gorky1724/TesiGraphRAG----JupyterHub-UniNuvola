@@ -1,10 +1,17 @@
-import pathlib
+import sys
+from pathlib import Path
 import anywidget
 import traitlets
-from sidecar_manager import SidecarManager
+
+project_root = Path("~/tesi_graphrag").expanduser().resolve()
+if str(project_root) not in sys.path:
+    sys.path.insert(0, str(project_root))
+
+from src.sidecar_manager import SidecarManager
+from src.config import HARD_FILTERING_THRESHOLD
 
 class ChunkGraphWidget(anywidget.AnyWidget):
-    _esm = pathlib.Path(__file__).parent / "frontend" / "chunk_graph.js"
+    _esm = Path(__file__).parent / "frontend" / "chunk_graph.js"
 
     graph_data = traitlets.Dict({"nodes": [], "links": []}).tag(sync=True)
     selected_tag = traitlets.Dict({}).tag(sync=True)
@@ -15,13 +22,13 @@ class ChunkGraphWidget(anywidget.AnyWidget):
         self.sidecar = SidecarManager(filepath=sidecar_path) if sidecar_path else SidecarManager()
         self.observe(self._on_pairwise_edit, names=["pairwise_edit"])
 
-    def load_graph(self, raw_graph_data):
-        """Carica il grafo applicando immediatamente i distance_factor salvati nel sidecar."""
-        # Recupero sicuro dei delta
-        sidecar_dict = getattr(self.sidecar, "data", {})
-        deltas = sidecar_dict.get("pairwise_deltas", {}) if isinstance(sidecar_dict, dict) else {}
-
-        links = raw_graph_data.get("links", [])
+    def load_graph(self, raw_graph_data: dict):
+        """
+        Carica la struttura del grafo applicando i distance_factor registrati nel sidecar
+        e iniettando la soglia hard_filter_threshold.
+        """
+        deltas = self.sidecar.data.get("pairwise_deltas", {})
+        links = raw_graph_data.get("links", raw_graph_data.get("edges", []))
         enriched_links = []
 
         for link in links:
@@ -34,16 +41,17 @@ class ChunkGraphWidget(anywidget.AnyWidget):
 
             factor = 1.0
             if k1 in deltas:
-                factor = deltas[k1].get("distance_factor", 1.0)
+                factor = float(deltas[k1].get("distance_factor", 1.0))
             elif k2 in deltas:
-                factor = deltas[k2].get("distance_factor", 1.0)
+                factor = float(deltas[k2].get("distance_factor", 1.0))
 
             l_copy["distance_factor"] = factor
             enriched_links.append(l_copy)
 
         self.graph_data = {
             "nodes": raw_graph_data.get("nodes", []),
-            "links": enriched_links
+            "links": enriched_links,
+            "hard_filter_threshold": raw_graph_data.get("hard_filter_threshold", HARD_FILTERING_THRESHOLD)
         }
 
     def _on_pairwise_edit(self, change):

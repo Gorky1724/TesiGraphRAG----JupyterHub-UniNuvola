@@ -36,3 +36,7 @@ COLLECTION_NAME = "ds1_graphrag_chunks"
 # PARAMETRI RERANKING
 # ======================================================================
 
+RETRIEVAL_TOP_K = 5
+HARD_FILTERING_THRESHOLD = 2.5
+RERANKING_TOP_N = 3 #n° di chunk da passare all'LLM dopo il reranking
+BASE_DISTANCE_PX = 150

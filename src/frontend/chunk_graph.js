@@ -12,6 +12,8 @@ export function render({ model, el }) {
   const width = 650;
   const height = 420;
 
+  let selectedNodeId = null;
+
   const svg = container.append("svg")
     .attr("width", width)
     .attr("height", height)
@@ -23,9 +25,9 @@ export function render({ model, el }) {
   // Contenitore SVG scalabile e traslabile
   const g = svg.append("g");
 
-  // Gestore dello Zoom (rotella) e Pan (drag sullo sfondo)
+  // Gestore Zoom e Pan
   const zoom = d3.zoom()
-    .scaleExtent([0.2, 4]) // Zoom da 20% a 400%
+    .scaleExtent([0.2, 4])
     .on("zoom", (event) => {
       g.attr("transform", event.transform);
     });
@@ -36,7 +38,7 @@ export function render({ model, el }) {
     .style("position", "absolute")
     .style("top", "12px")
     .style("right", "12px")
-    .style("width", "220px")
+    .style("width", "230px")
     .style("padding", "10px")
     .style("background", "rgba(255, 255, 255, 0.95)")
     .style("border", "1px solid #cbd5e1")
@@ -44,23 +46,40 @@ export function render({ model, el }) {
     .style("font-size", "12px")
     .style("color", "#334155")
     .style("pointer-events", "none")
-    .html("<b>📌 Info Chunk</b><br><span style='color:#94a3b8;'>Clicca un nodo per vederne il testo</span>");
+    .style("box-shadow", "0 2px 4px rgba(0,0,0,0.05)")
+    .html("<b>📌 Info Chunk</b><br><span style='color:#94a3b8;'>Clicca un nodo per vederne testo e penalità</span>");
 
   function draw() {
     const graph = model.get("graph_data");
     if (!graph || !graph.nodes || graph.nodes.length === 0) return;
+
+    // Lettura dinamica della soglia inviata da Python (fallback a 2.5)
+    const hardFilterThreshold = graph.hard_filter_threshold || 2.5;
 
     g.selectAll("*").remove();
 
     const nodes = graph.nodes.map(d => ({ ...d }));
     const links = graph.links ? graph.links.map(d => ({ ...d })) : [];
 
-    const BASE_DISTANCE = 120;
+    // Trova la penalità massima tra tutti gli archi incidenti sul nodo
+    function getMaxPenalty(nodeId) {
+      let maxPenalty = 1.0;
+      links.forEach(l => {
+        const srcId = typeof l.source === 'object' ? l.source.id : l.source;
+        const tgtId = typeof l.target === 'object' ? l.target.id : l.target;
+        if (srcId === nodeId || tgtId === nodeId) {
+          const factor = l.distance_factor || (l.target_distance && l.base_distance ? l.target_distance / l.base_distance : 1.0);
+          if (factor > maxPenalty) maxPenalty = factor;
+        }
+      });
+      return maxPenalty;
+    }
 
+    // Simulazione D3 basata su distanze da Qdrant * distance_factor
     const simulation = d3.forceSimulation(nodes)
       .force("link", d3.forceLink(links)
         .id(d => d.id)
-        .distance(d => BASE_DISTANCE * (d.distance_factor || 1.0))
+        .distance(d => (d.base_distance || 120) * (d.distance_factor || 1.0))
       )
       .force("charge", d3.forceManyBody().strength(-180))
       .force("center", d3.forceCenter(width / 2, height / 2));
@@ -86,8 +105,6 @@ export function render({ model, el }) {
       .data(nodes)
       .enter().append("circle")
       .attr("r", 12)
-      .attr("fill", "#6366f1")
-      .attr("stroke", "#ffffff")
       .attr("stroke-width", 2)
       .style("cursor", "pointer");
 
@@ -95,11 +112,28 @@ export function render({ model, el }) {
       .selectAll("text")
       .data(nodes)
       .enter().append("text")
-      .text(d => d.id)
       .attr("font-size", "11px")
       .attr("dx", 15)
       .attr("dy", 4)
       .attr("fill", "#1e293b");
+
+    function updateNodeStyles() {
+      node
+        .attr("fill", d => {
+          if (d.id === selectedNodeId) return "#f59e0b"; // Giallo/Ambra = Selezionato
+          const maxP = getMaxPenalty(d.id);
+          if (maxP >= hardFilterThreshold) return "#ef4444"; // Rosso = Escluso
+          if (maxP > 1.0) return "#f97316"; // Arancione = Penalizzato
+          return "#6366f1"; // Indaco = Normale
+        })
+        .attr("stroke", d => (d.id === selectedNodeId ? "#1e293b" : "#ffffff"))
+        .attr("stroke-width", d => (d.id === selectedNodeId ? 3 : 2));
+
+      label.text(d => {
+        const maxP = getMaxPenalty(d.id);
+        return maxP > 1.0 ? `${d.id} (${maxP.toFixed(1)}x)` : d.id;
+      });
+    }
 
     simulation.on("end", () => {
       nodes.forEach(n => {
@@ -136,7 +170,8 @@ export function render({ model, el }) {
             const dx = l.target.x - l.source.x;
             const dy = l.target.y - l.source.y;
             const currentDist = Math.sqrt(dx * dx + dy * dy);
-            const factor = currentDist / BASE_DISTANCE;
+            const baseDist = l.base_distance || 120;
+            const factor = currentDist / baseDist;
 
             l.distance_factor = factor;
 
@@ -149,14 +184,31 @@ export function render({ model, el }) {
           }
         });
 
+        updateNodeStyles();
         updatePositions();
       });
 
     node.call(drag);
 
     node.on("click", (event, d) => {
-      node.attr("fill", n => n.id === d.id ? "#ef4444" : "#6366f1");
-      infoBox.html(`<b>🆔 ${d.id}</b><br><span style="color:#334155;">📖 ${d.text || "Nessun testo"}</span>`);
+      selectedNodeId = d.id;
+      updateNodeStyles();
+
+      const maxP = getMaxPenalty(d.id);
+      let statusHtml = "<span style='color:#10b981; font-weight:bold;'>✅ Attivo</span>";
+      if (maxP >= hardFilterThreshold) {
+        statusHtml = `<span style='color:#ef4444; font-weight:bold;'>❌ ESCLUSO (${maxP.toFixed(2)}x)</span>`;
+      } else if (maxP > 1.0) {
+        statusHtml = `<span style='color:#f97316; font-weight:bold;'>⚠️ Penalizzato (${maxP.toFixed(2)}x)</span>`;
+      }
+
+      infoBox.html(`
+        <b>🆔 ${d.id}</b><br>
+        <b>Stato:</b> ${statusHtml}<br>
+        <hr style="border:0; border-top:1px solid #e2e8f0; margin:6px 0;">
+        <span style="color:#334155; display:block; max-height:100px; overflow-y:auto;">📖 ${d.text || "Nessun testo disponibile"}</span>
+      `);
+
       model.set("selected_tag", { id: d.id, text: d.text || "" });
       model.save_changes();
     });
@@ -175,7 +227,8 @@ export function render({ model, el }) {
           const dx = d.target.x - d.source.x;
           const dy = d.target.y - d.source.y;
           const dist = Math.round(Math.sqrt(dx * dx + dy * dy));
-          const factor = (dist / BASE_DISTANCE).toFixed(2);
+          const baseDist = d.base_distance || 120;
+          const factor = (dist / baseDist).toFixed(2);
           return `${dist}px (${factor}x)`;
         });
 
@@ -188,9 +241,12 @@ export function render({ model, el }) {
         .attr("y", d => d.y);
     }
 
+    updateNodeStyles();
     simulation.on("tick", updatePositions);
   }
 
   model.on("change:graph_data", draw);
   draw();
 }
+
+export default { render };
