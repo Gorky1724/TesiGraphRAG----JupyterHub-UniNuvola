@@ -31,3 +31,8 @@ DEFAULT_NUM_THREAD = 4
 
 COLLECTION_NAME = "ds1_graphrag_chunks"
 #da cambiare se si dovesse utilizzare qualche altra collezione
+
+# ======================================================================
+# PARAMETRI RERANKING
+# ======================================================================
+
