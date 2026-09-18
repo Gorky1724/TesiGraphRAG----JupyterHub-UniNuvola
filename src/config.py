@@ -35,6 +35,13 @@ COLLECTION_NAME = "ds1_graphrag_chunks"
 # ======================================================================
 # PARAMETRI GRAFO E VISUALIZZAZIONE D3
 # ======================================================================
-SIMILARITY_THRESHOLD = 0.70  # Soglia minima Cosine Similarity per tracciare un arco
+SIMILARITY_THRESHOLD = 0.45  # Soglia minima Cosine Similarity per tracciare un arco tra 2 chunk -- consigliato [0.45, 0.55]
 BASE_GRAPH_DISTANCE = 300   # Lunghezza base in pixel (per similarità 1.0)
+
+# ======================================================================
+# PARAMETRI RETRIEVAL E RERANKING
+# ======================================================================
+RETRIEVAL_TOP_K = 7  # Numero chunk retrieved da Qdrant con il vector_similarity_search
+RERANKING_TOP_N = 4   # Numero chunk restituiti dopo il reranking
+
 
