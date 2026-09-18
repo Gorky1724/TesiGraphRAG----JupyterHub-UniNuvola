@@ -8,7 +8,7 @@ if str(project_root) not in sys.path:
     sys.path.insert(0, str(project_root))
 
 from src.config import BASE_GRAPH_DISTANCE
-from sidecar_manager import SidecarManager
+from src.sidecar_manager import SidecarManager
 
 class ChunkGraphWidget(anywidget.AnyWidget):
     _esm = pathlib.Path(__file__).parent / "frontend" / "chunk_graph.js"

@@ -32,12 +32,9 @@ DEFAULT_NUM_THREAD = 4
 COLLECTION_NAME = "ds1_graphrag_chunks"
 #da cambiare se si dovesse utilizzare qualche altra collezione
 
-```
 # ======================================================================
 # PARAMETRI GRAFO E VISUALIZZAZIONE D3
 # ======================================================================
 SIMILARITY_THRESHOLD = 0.70  # Soglia minima Cosine Similarity per tracciare un arco
 BASE_GRAPH_DISTANCE = 300   # Lunghezza base in pixel (per similarità 1.0)
-
-
 
