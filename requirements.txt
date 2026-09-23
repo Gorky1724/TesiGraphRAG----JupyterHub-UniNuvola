@@ -4,6 +4,8 @@ langchain-community
 langchain-qdrant
 langchain-ollama
 langchain-text-splitters
+langid
+numpy
 fastembed
 qdrant-client
 networkx
