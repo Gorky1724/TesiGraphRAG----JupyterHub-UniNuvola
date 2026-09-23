@@ -23,9 +23,19 @@ class ChunkGraphWidget(anywidget.AnyWidget):
     pairwise_edit = traitlets.Dict({}).tag(sync=True)
     pairwise_edits_batch = traitlets.List([]).tag(sync=True)
 
-    def __init__(self, sidecar_path=None, **kwargs):
+    def __init__(self, sidecar=None, sidecar_path=None, **kwargs):
+        """
+        Per evitare di avere una dobbia cache del sidecar, è bene passare il sidecar
+        e non il sidecar_path. L'opzione è stata lasciata per test e legacy, ma farlo rischia
+        di dare un WARNING che è fondamentale non ignorare se non con coscienza
+        """
         super().__init__(**kwargs)
-        self.sidecar = SidecarManager(filepath=sidecar_path) if sidecar_path else SidecarManager()
+        if isinstance(sidecar, SidecarManager):
+            self.sidecar = sidecar
+        elif sidecar_path:
+            self.sidecar = SidecarManager(filepath=sidecar_path)
+        else:
+            self.sidecar = SidecarManager()
         self.observe(self._on_pairwise_edit, names=["pairwise_edit"])
         self.observe(self._on_pairwise_edits_batch, names=["pairwise_edits_batch"])
         self.observe(self._on_tag_action, names=["tag_action"])

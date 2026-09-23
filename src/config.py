@@ -58,6 +58,18 @@ TAG_MALUS_FACTOR = 0.00   # Malus dello 0% (nessuna penalizzazione per chunk pri
 # TAG_MALUS_FACTOR = 0.05 # Opzione alternativa per malus leggerissimo (-5%) se desiderato
 MAX_BOOST = 0.50 # Limita il boost per evitare sbilanciamento se combaciano troppi chunk
 
+TAG_ASSIGN_THRESHOLD = 0.42
+TAG_WEIGHT_COSINE = 0.75
+TAG_WEIGHT_OVERLAP = 0.25
+
+""" 2° test values - troppe assegnazioni
+TAG_ASSIGN_THRESHOLD = 0.35
+TAG_WEIGHT_COSINE = 0.85
+TAG_WEIGHT_OVERLAP = 0.15
+"""
+
+""" 1° test values - troppe poche assegnazioni
 TAG_ASSIGN_THRESHOLD = 0.50
 TAG_WEIGHT_COSINE = 0.70
 TAG_WEIGHT_OVERLAP = 0.30
+"""
