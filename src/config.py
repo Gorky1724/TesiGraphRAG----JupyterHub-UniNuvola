@@ -10,7 +10,9 @@ LLM_MODEL = "llama3.2"       # Llama 3.2 (3B) -> Sviluppo fluido e bilanciato su
 
 
 # ======================================================================
-# SELEZIONE MODELLO EMBEDDING (solo UNA delle opzioni) -- cambio di embedding richiede re-Ingestion dei DataSet
+# SELEZIONE MODELLO EMBEDDING (solo UNA delle opzioni).
+#  Il cambio di embedding richiede la re-Ingestion dei DataSet (per poter essere manipolato con quel certo modello).
+#  In data/collection_registry.json sono salvate le info di ingestione e associazione collection-embedding_model
 # ======================================================================
 
 # 768 dim
