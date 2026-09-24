@@ -79,9 +79,11 @@ class TagReranker:
             initial_score = max(0.0, float(hit.score)) # Per sicurezza, così qualunque score non sarà negativo
 
             # Estrazione ID
-            doc_id = payload.get("doc_id", "doc")
-            chunk_idx = payload.get("chunk_index", idx)
-            chunk_id = payload.get("chunk_id", f"{doc_id}_chunk_{chunk_idx}")
+            meta = payload.get("metadata") if isinstance(payload.get("metadata"), dict) else payload
+            doc_id = payload.get("doc_id") or meta.get("doc_id") or "doc"
+            raw_idx = payload.get("chunk_index") if payload.get("chunk_index") is not None else meta.get("chunk_index")
+            chunk_idx = raw_idx if raw_idx is not None else idx_global
+            chunk_id = payload.get("chunk_id") or meta.get("chunk_id") or f"{doc_id}_chunk_{chunk_idx}"
 
             # TAG del chunk in Analisi
             chunk_info = tag_overrides.get(chunk_id, {})

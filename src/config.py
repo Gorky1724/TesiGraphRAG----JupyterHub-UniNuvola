@@ -34,10 +34,12 @@ DEFAULT_NUM_THREAD = 4
 
 # ======================================================================
 # SELEZIONE COLLEZIONE QDRANT DA UTILIZZARE (solo UNA delle opzioni)
+#  Scommentare solo la collezione che si sta utilizzando
 # ======================================================================
 
-COLLECTION_NAME = "ds1_graphrag_chunks"
-#da cambiare se si dovesse utilizzare qualche altra collezione
+#COLLECTION_NAME = "ds1_graphrag_chunks"
+COLLECTION_NAME = "ds1_unilingual_base"
+#COLLECTION_NAME = "ds1_multilingual_base"
 
 # ======================================================================
 # PARAMETRI GRAFO E VISUALIZZAZIONE D3
