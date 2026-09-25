@@ -103,6 +103,7 @@ class TagAssigner:
             keep_alive=DEFAULT_KEEP_ALIVE,
             num_thread=DEFAULT_NUM_THREAD,
             temperature=0,
+            stop=["\n"], # per evitare format leak nell'espansione del tag
         )
 
         # Dizionari per memorizzare l'espansione dei tag e i relativi
@@ -164,8 +165,8 @@ class TagAssigner:
         self.expanded_tags_cache[cache_key] = expanded_text
 
         ### DEBUG
-        print(f"pDB>> tag: {tag}")
-        print(f"pDB>> expanded_tag:\n  >>>{expanded_text}")
+        print(f"DB>> tag: {tag}")
+        print(f"DB>> expanded_tag:\n  >>>{expanded_text}")
         ######
 
         return expanded_text
