@@ -130,22 +130,44 @@ class TagAssigner:
             return self.expanded_tags_cache[cache_key]
 
         prompt = (
+            f"Descrivi il tag '{tag}' in lingua '{lang}' in una singola frase densa di informazioni.\n"
+            f"Includi obbligatoriamente: sinonimi diretti, sotto-categorie principali, strumenti o componenti chiave, ed entità o termini tecnici correlati.\n"
+            f"Evita preamboli da dizionario (es. 'È un'attività che...') e concentrati sull'inserire il maggior numero di sostantivi specifici del settore.\n"
+            f"Formato: '{tag}: <frase>'. Senza virgolette."
+            """
+            f"Fornisci un'espansione descrittiva per il tag '{tag}' in lingua '{lang}'.\n"
+            f"Includi concetti generali ampiamente noti, sinonimi e plurali (anche in inglese se diffusi).\n"
+            f"Concentrati esclusivamente su sostantivi e concetti chiave, evitando verbi inutili e termini gergali inventati.\n"
+            f"Formato tassativo: '{tag}: <testo_espanso>'.\n"
+            f"Non usare virgolette e rispondi solo con la riga richiesta."
+            """
+            """
             f"Genera una singola e breve frase descrittiva per il tag '{tag}', "
             f"scritta ESCLUSIVAMENTE nella lingua con codice ISO 639-1 '{lang}'. "
-            f"La frase deve contenere il concetto esteso, sinonimi e termini chiave correlati in quella lingua,"
-            f"evitando termini ambigui e inserendo anche i plurali dei termini più significativi. "
-            f"Rispondi ESCLUSIVAMENTE con la frase descrittiva, senza alcun testo aggiuntivo."
+            f"La frase deve ripetere il tag e dopo : contenere il concetto esteso, sinonimi e termini chiave correlati in quella lingua,"
+            f"evitando termini ambigui e inserendo anche i plurali dei termini più significativi e eventuali termini tecnici in inglese e nella lingua del codice ISO. "
+            f"Rispondi ESCLUSIVAMENTE con il tag ripetuto seguito dalla frase descrittiva, senza alcun testo aggiuntivo."
+            """
         )
 
         try:
-            response = self.llm.invoke(prompt)
-            expanded_text = response.content.strip()
+            raw_response = self.llm.invoke(prompt).content.strip()
+            if raw_response.startswith(f"{tag}:"): # Per garantire che inizi ripetendo il tag all'inizio
+                expanded_text = raw_response
+            else:
+                expanded_text = f"{tag}: {raw_response}"
         except Exception as e: #frase di fallback
             expanded_text = f"{tag}: argomenti, sinonimi e concetti correlati a {tag}"
             self._fallback_tags.add(cache_key) # Esclusi anche i vocaboli del fallback
             print(f"!!!>>> Errore nell'espansione del tag '{tag}': {e}")
 
         self.expanded_tags_cache[cache_key] = expanded_text
+
+        ### DEBUG
+        print(f"pDB>> tag: {tag}")
+        print(f"pDB>> expanded_tag:\n  >>>{expanded_text}")
+        ######
+
         return expanded_text
 
     def cosine_sim(self, v1, v2):
