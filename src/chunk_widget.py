@@ -7,7 +7,7 @@ project_root = Path("~/tesi_graphrag").expanduser().resolve()
 if str(project_root) not in sys.path:
     sys.path.insert(0, str(project_root))
 
-from src.config import BASE_GRAPH_DISTANCE
+from src.config import BASE_GRAPH_DISTANCE, DISTANCE_CLASS_FACTORS
 from src.sidecar_manager import SidecarManager
 
 class ChunkGraphWidget(anywidget.AnyWidget):
@@ -19,26 +19,99 @@ class ChunkGraphWidget(anywidget.AnyWidget):
     global_tags = traitlets.Dict({}).tag(sync=True)
     tag_action = traitlets.Dict({}).tag(sync=True)
 
-    #Traitlets per modifiche sulla distanza in batch -- assicura di non perdere edit
-    pairwise_edit = traitlets.Dict({}).tag(sync=True)
+    #Traitlets per modifiche sulle classi di distanza in batch -- assicura di non perdere edit
+    pairwise_class_edit = traitlets.Dict({}).tag(sync=True)
     pairwise_edits_batch = traitlets.List([]).tag(sync=True)
 
     def __init__(self, sidecar=None, sidecar_path=None, **kwargs):
         """
-        Per evitare di avere una dobbia cache del sidecar, è bene passare il sidecar
-        e non il sidecar_path. L'opzione è stata lasciata per test e legacy, ma farlo rischia
-        di dare un WARNING che è fondamentale non ignorare se non con coscienza
+        Per evitare di avere una doppia cache del sidecar_manager, è bene passare il sidecar_mngr
+        e non il sidecar_path per evitare disallineamenti della cache RAM. L'opzione è stata lasciata per test e legacy, ma farlo rischia
+        di dare un WARNING che è fondamentale non ignorare se non con coscienza.
         """
         super().__init__(**kwargs)
+
         if isinstance(sidecar, SidecarManager):
             self.sidecar = sidecar
         elif sidecar_path:
             self.sidecar = SidecarManager(filepath=sidecar_path)
         else:
             self.sidecar = SidecarManager()
-        self.observe(self._on_pairwise_edit, names=["pairwise_edit"])
+
+        self._raw_graph_data = {"nodes": [], "links": []}
+
+        self.observe(self._on_pairwise_edit, names=["pairwise_class_edit"])
         self.observe(self._on_pairwise_edits_batch, names=["pairwise_edits_batch"])
         self.observe(self._on_tag_action, names=["tag_action"])
+        self.refresh_global_tags()
+
+    ### Caricamento grafo
+    def load_graph(self, raw_graph_data):
+        """Carica il grafo applicando immediatamente i distance_factor salvati nel sidecar."""
+        self._raw_graph_data = raw_graph_data
+        data = self.sidecar.load_data()
+        adj = data.get("modified_adjacencies", {})
+        overrides = data.get("tag_overrides", {})
+
+        raw_links = raw_graph_data.get("links", [])
+        enriched_links = []
+        existing_pairs = set()
+
+        # Archi e struttura a adiacenza
+        for link in raw_links:
+            l_copy = dict(link)
+            src = str(l_copy["source"]["id"] if isinstance(l_copy["source"], dict) else l_copy["source"])
+            tgt = str(l_copy["target"]["id"] if isinstance(l_copy["target"], dict) else l_copy["target"])
+
+            pair_key = tuple(sorted([src, tgt]))
+            existing_pairs.add(pair_key)
+
+            distance_class = "INVARIATI"
+            if src in adj and tgt in adj[src]:
+                distance_class = adj[src][tgt].get("distance_class", "INVARIATI")
+            elif tgt in adj and src in adj[tgt]:
+                distance_class = adj[tgt][src].get("distance_class", "INVARIATI")
+
+            factor = DISTANCE_CLASS_FACTORS.get(distance_class, 1.0)
+
+            l_copy["distance_class"] = distance_class
+            l_copy["distance_factor"] = factor
+            enriched_links.append(l_copy)
+
+        # Aggiunge archi del grafo non presenti nel kg originale
+        #  Ma derivanti da alterazioni del sidecar
+        for src, targets in adj.items():
+            for tgt, info in targets.items():
+                pair_key = tuple(sorted([str(src), str(tgt)]))
+                if pair_key not in existing_pairs:
+                    d_cls = info.get("distance_class", "INVARIATI")
+                    if d_cls != "INVARIATI":
+                        existing_pairs.add(pair_key)
+                        factor = DISTANCE_CLASS_FACTORS.get(d_cls, 1.0)
+                        enriched_links.append({
+                            "source": str(src),
+                            "target": str(tgt),
+                            "distance_class": d_cls,
+                            "distance_factor": factor
+                        })
+
+        # Info sui nodi
+        nodes = raw_graph_data.get("nodes", [])
+        enriched_nodes = []
+        for node in nodes:
+            n_copy = dict(node)
+            cid = str(n_copy.get("id"))
+            if cid in overrides:
+                n_copy["user_tags"] = overrides[cid].get("user_tags", [])
+            elif "user_tags" not in n_copy:
+                n_copy["user_tags"] = n_copy.get("tags", [])
+            enriched_nodes.append(n_copy)
+
+        self.graph_data = {
+            "nodes": enriched_nodes,
+            "links": enriched_links,
+            "base_distance": BASE_GRAPH_DISTANCE
+        }
         self.refresh_global_tags()
 
     ### Gestione TAG
@@ -82,63 +155,17 @@ class ChunkGraphWidget(anywidget.AnyWidget):
         new_graph_data["nodes"] = nodes
         self.graph_data = new_graph_data
 
-    ### Caricamento grafo
-    def load_graph(self, raw_graph_data):
-        """Carica il grafo applicando immediatamente i distance_factor salvati nel sidecar."""
-        data = self.sidecar.load_data()
-        deltas = data.get("pairwise_deltas", {})
-        overrides = data.get("tag_overrides", {})
-
-        links = raw_graph_data.get("links", [])
-        enriched_links = []
-
-        # archi
-        for link in links:
-            l_copy = dict(link)
-            src = l_copy["source"]["id"] if isinstance(l_copy["source"], dict) else l_copy["source"]
-            tgt = l_copy["target"]["id"] if isinstance(l_copy["target"], dict) else l_copy["target"]
-
-            k1 = f"{src}_AND_{tgt}"
-            k2 = f"{tgt}_AND_{src}"
-
-            factor = 1.0
-            if k1 in deltas:
-                factor = deltas[k1].get("distance_factor", 1.0)
-            elif k2 in deltas:
-                factor = deltas[k2].get("distance_factor", 1.0)
-
-            l_copy["distance_factor"] = factor
-            enriched_links.append(l_copy)
-
-        # info sui nodi
-        nodes = raw_graph_data.get("nodes", [])
-        enriched_nodes = []
-        for node in nodes:
-            n_copy = dict(node)
-            cid = str(n_copy.get("id"))
-            if cid in overrides:
-                n_copy["user_tags"] = overrides[cid].get("user_tags", [])
-            elif "user_tags" not in n_copy:
-                n_copy["user_tags"] = n_copy.get("tags", [])
-            enriched_nodes.append(n_copy)
-
-        self.graph_data = {
-            "nodes": enriched_nodes,
-            "links": enriched_links,
-            "base_distance": BASE_GRAPH_DISTANCE
-        }
-        self.refresh_global_tags()
-
-    ### Gestione edit Distanze
+    ### Gestione Classi di Distanza
     def _on_pairwise_edit(self, change):
         """Gestisce una singola modifica di distanza inviata da JS -- versione meno sicura di pairwise_edits_batch"""
         edit = change["new"]
         if edit and "chunk_1" in edit and "chunk_2" in edit:
-            self.sidecar.save_pairwise_delta(
-                chunk_id_1=edit["chunk_1"],
-                chunk_id_2=edit["chunk_2"],
-                distance_factor=edit["distance_factor"]
-            )
+            c1 = edit["chunk_1"]
+            c2 = edit["chunk_2"]
+            d_cls = edit.get("distance_class")
+            self.sidecar.save_pairwise_class_edits(c1, c2, d_cls)
+            if self._raw_graph_data.get("nodes"):
+                self.load_graph(self._raw_graph_data)
 
     def _on_pairwise_edits_batch(self, change):
         """
@@ -147,4 +174,7 @@ class ChunkGraphWidget(anywidget.AnyWidget):
         Delegata al SidecarManager.
         """
         edits = change["new"]
-        self.sidecar.save_pairwise_deltas_batch(edits)
+        if edits and isinstance(edits, list):
+            self.sidecar.save_pairwise_class_edits_batch(edits)
+            if self._raw_graph_data.get("nodes"):
+                self.load_graph(self._raw_graph_data)

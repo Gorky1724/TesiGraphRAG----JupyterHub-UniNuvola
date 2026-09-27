@@ -7,10 +7,41 @@ export function render({ model, el }) {
     return String(val);
   }
 
+  function getEdgeKey(src, tgt) {
+    const s = str(src);
+    const t = str(tgt);
+    return s < t ? `${s}_AND_${t}` : `${t}_AND_${s}`;
+  }
+
   let currentSimulation = null;
   let renderPending = false;
   let selectedNodeId = null;
+  let selectedEdgeKey = null; // Memorizza la chiave dell'arco selezionato
   let currentNodes = [];
+
+  //palette blu-azzurro-grigi-arancione-rosso
+  const EDGE_CLASSES = [
+    { name: "MOLTO_AVVICINATI", label: "  Molto Avvicinati", color: "#1d4ed8" },
+    { name: "AVVICINATI", label: "  Avvicinati", color: "#06b6d4" },
+    { name: "INVARIATI", label: "  Invariati", color: "#64748b" },
+    { name: "ALLONTANATI", label: "  Allontanati", color: "#f97316" },
+    { name: "MOLTO_ALLONTANATI",label: "  Molto Allontanati",color: "#dc2626" }
+  ];
+
+  /*
+  // palette alternativa verde scuro-verde chiaro-grigio-arancione-rosso
+  const EDGE_CLASSES = [
+      { name: "MOLTO_AVVICINATI", label: "  Molto Avvicinati", color: "#15803d" },
+      { name: "AVVICINATI", label: "  Avvicinati", color: "#22c55e" },
+      { name: "INVARIATI", label: "  Invariati", color: "#64748b" },
+      { name: "ALLONTANATI", label: "  Allontanati", color: "#f97316" },
+      { name: "MOLTO_ALLONTANATI", label: "  Molto Allontanati", color: "#ef4444" }
+    ];
+  */
+
+  const EDGE_CLASS_COLORS = Object.fromEntries(
+    EDGE_CLASSES.map(c => [c.name, c.color])
+  );
 
   // --- LAYOUT PRINCIPALE FLEXBOX ---
   const mainContainer = d3.select(el)
@@ -49,6 +80,19 @@ export function render({ model, el }) {
 
   svg.call(zoom);
 
+  // --- DESELEZIONE AL CLICK SULLO SFONDO SVG ---
+  svg.on("click", (event) => {
+    if (event.target === svg.node()) {
+      selectedNodeId = null;
+      selectedEdgeKey = null;
+
+      model.set("selected_tag", {});
+      model.save_changes();
+
+      scheduleDraw();
+    }
+  });
+
   // --- COLONNA DESTRA: PANNELLO DI CONTROLLO ---
   const panel = mainContainer.append("div")
     .style("width", "320px")
@@ -63,7 +107,7 @@ export function render({ model, el }) {
     .style("gap", "12px")
     .style("overflow-y", "auto");
 
-  // Legenda
+  // Legenda Tag
   const legendSection = panel.append("div")
     .style("padding-bottom", "10px")
     .style("border-bottom", "1px solid #e2e8f0");
@@ -79,7 +123,7 @@ export function render({ model, el }) {
     .style("flex-wrap", "wrap")
     .style("gap", "6px");
 
-  // Dettagli Chunk
+  // Sezione Dettagli Chunk
   const detailSection = panel.append("div")
     .style("display", "flex")
     .style("flex-direction", "column")
@@ -88,7 +132,7 @@ export function render({ model, el }) {
   detailSection.append("div")
     .style("font-weight", "bold")
     .style("font-size", "13px")
-    .text(">> Chunk Selezionato");
+    .text(" °> Chunk Selezionato");
 
   const detailContent = detailSection.append("div")
     .style("font-size", "12px")
@@ -96,7 +140,7 @@ export function render({ model, el }) {
 
   const detailHeader = detailContent.append("div").style("font-weight", "bold").style("color", "#0f172a").style("margin-bottom", "4px");
   const detailText = detailContent.append("div")
-    .style("max-height", "110px")
+    .style("max-height", "90px")
     .style("overflow-y", "auto")
     .style("padding", "6px 8px")
     .style("background", "#f1f5f9")
@@ -109,11 +153,12 @@ export function render({ model, el }) {
     .style("display", "flex")
     .style("flex-wrap", "wrap")
     .style("gap", "4px")
-    .style("margin-bottom", "10px");
+    .style("margin-bottom", "8px");
 
   const addTagBox = detailContent.append("div")
     .style("display", "flex")
-    .style("gap", "4px");
+    .style("gap", "4px")
+    .style("margin-bottom", "10px");
 
   const inputTag = addTagBox.append("input")
     .attr("type", "text")
@@ -134,7 +179,29 @@ export function render({ model, el }) {
     .style("cursor", "pointer")
     .style("font-size", "11px");
 
-  // Aggiunta Tag con controllo duplicati
+  // Sezione Controllo Classe Arco / Distanza
+  const edgeSection = panel.append("div")
+    .style("display", "flex")
+    .style("flex-direction", "column")
+    .style("gap", "6px")
+    .style("padding-top", "8px")
+    .style("border-top", "1px solid #e2e8f0");
+
+  edgeSection.append("div")
+    .style("font-weight", "bold")
+    .style("font-size", "13px")
+    .text("<--> Modifica Classe Distanza Arco");
+
+  const edgeContent = edgeSection.append("div")
+    .style("font-size", "11px")
+    .style("color", "#64748b");
+
+  const edgeHeader = edgeContent.append("div").style("font-weight", "bold").style("color", "#0f172a").style("margin-bottom", "4px");
+  const edgeButtonsContainer = edgeContent.append("div")
+    .style("display", "flex")
+    .style("flex-direction", "column")
+    .style("gap", "4px");
+
   function submitTag() {
     const val = inputTag.property("value").trim();
     if (!val || !selectedNodeId) return;
@@ -183,7 +250,6 @@ export function render({ model, el }) {
     });
   }
 
-  // Generazione colore o gradiente per multi-tag
   function getNodeFill(d, globalTags) {
     const userTags = d.user_tags || d.tags || [];
     if (userTags.length === 0) return "#94a3b8";
@@ -193,16 +259,13 @@ export function render({ model, el }) {
       return (globalTags[tag] && globalTags[tag].color) ? globalTags[tag].color : "#6366f1";
     }
 
-    // Nodi Multi-Tag: Creazione Gradiente SVG
     const gradId = `grad-${str(d.id).replace(/[^a-zA-Z0-9_-]/g, '_')}`;
     defs.select(`#${gradId}`).remove();
 
     const grad = defs.append("linearGradient")
       .attr("id", gradId)
-      .attr("x1", "0%")
-      .attr("y1", "0%")
-      .attr("x2", "100%")
-      .attr("y2", "100%");
+      .attr("x1", "0%").attr("y1", "0%")
+      .attr("x2", "100%").attr("y2", "100%");
 
     const count = userTags.length;
     userTags.forEach((t, i) => {
@@ -215,6 +278,47 @@ export function render({ model, el }) {
     });
 
     return `url(#${gradId})`;
+  }
+
+  function renderEdgePanel(sourceId, targetId, currentClass) {
+    edgeButtonsContainer.html("");
+    if (!sourceId || !targetId) {
+      edgeHeader.text("Clicca un arco per cambiarne la classe.");
+      return;
+    }
+
+    edgeHeader.text(`Arco: ${sourceId} ↔ ${targetId}`);
+
+    EDGE_CLASSES.forEach(cls => {
+      // Evidenzia con bordo nero SOLO se l'arco ha una classe esplicita assegnata
+      const isSelected = Boolean(currentClass) && currentClass.toUpperCase() === cls.name;
+
+      const btn = edgeButtonsContainer.append("button")
+        .text(cls.label)
+        .style("padding", "4px 8px")
+        .style("border", isSelected ? "2px solid #000000" : "1px solid #cbd5e1")
+        .style("border-radius", "4px")
+        .style("background", cls.color)
+        .style("color", "#ffffff")
+        .style("font-weight", "bold")
+        .style("font-size", "10px")
+        .style("cursor", "pointer")
+        .style("text-align", "left");
+
+      btn.on("click", (event) => {
+        event.stopPropagation();
+        model.set("pairwise_class_edit", {
+          chunk_1: sourceId,
+          chunk_2: targetId,
+          distance_class: cls.name,
+          timestamp: Date.now()
+        });
+        model.save_changes();
+        selectedEdgeKey = getEdgeKey(sourceId, targetId);
+        renderEdgePanel(sourceId, targetId, cls.name);
+        scheduleDraw();
+      });
+    });
   }
 
   function renderDetailPanel() {
@@ -266,7 +370,8 @@ export function render({ model, el }) {
           .style("font-weight", "bold")
           .style("margin-left", "2px")
           .text("✕")
-          .on("click", () => {
+          .on("click", (event) => {
+            event.stopPropagation();
             model.set("tag_action", {
               action: "remove",
               chunk_id: nodeData.id,
@@ -293,6 +398,10 @@ export function render({ model, el }) {
     updateLegend();
     renderDetailPanel();
 
+    if (!selectedEdgeKey) {
+      renderEdgePanel(null, null, null);
+    }
+
     if (!graph || !graph.nodes || graph.nodes.length === 0) return;
 
     const posMap = {};
@@ -311,35 +420,93 @@ export function render({ model, el }) {
     });
 
     currentNodes = nodes;
-    const links = graph.links ? graph.links.map(d => ({ ...d })) : [];
+    const links = graph.links ? graph.links.map(d => ({ ...d, isVirtual: false })) : [];
+
+    // --- ARCHI SOTTO-SOGLIA (TRATTEGGIATI, NULL CLASS) PER NODO SELEZIONATO ---
+    if (selectedNodeId) {
+      const connectedTargets = new Set();
+      links.forEach(l => {
+        const s = str(typeof l.source === 'object' ? l.source.id : l.source);
+        const t = str(typeof l.target === 'object' ? l.target.id : l.target);
+        if (s === str(selectedNodeId)) connectedTargets.add(t);
+        if (t === str(selectedNodeId)) connectedTargets.add(s);
+      });
+
+      nodes.forEach(n => {
+        const nId = str(n.id);
+        if (nId !== str(selectedNodeId) && !connectedTargets.has(nId)) {
+          links.push({
+            source: selectedNodeId,
+            target: n.id,
+            distance_class: null, // Nessuna classe preselezionata
+            isVirtual: true
+          });
+        }
+      });
+    }
+
     const BASE_DISTANCE = graph.base_distance || 120;
 
     const simulation = d3.forceSimulation(nodes)
       .force("link", d3.forceLink(links)
         .id(d => d.id)
-        .distance(d => BASE_DISTANCE * (d.distance_factor || 1.0))
+        .distance(BASE_DISTANCE)
       )
       .force("charge", d3.forceManyBody().strength(-180))
       .force("center", d3.forceCenter(width / 2, height / 2));
 
     currentSimulation = simulation;
 
-    const link = g.append("g")
-      .selectAll("line")
+    // --- RENDERING ARCHI ---
+    const linkGroup = g.append("g")
+      .selectAll("g")
       .data(links)
-      .enter().append("line")
-      .attr("stroke", "#94a3b8")
-      .attr("stroke-width", 2);
+      .enter().append("g");
 
-    const linkText = g.append("g")
-      .selectAll("text")
-      .data(links)
-      .enter().append("text")
-      .attr("font-size", "11px")
-      .attr("font-weight", "bold")
-      .attr("fill", "#0284c7")
-      .attr("text-anchor", "middle");
+    // Hit-Area invisibile (12px) per facilitare il click
+    const linkHitArea = linkGroup.append("line")
+      .attr("stroke", "transparent")
+      .attr("stroke-width", 12)
+      .style("cursor", "pointer");
 
+    // Linea visibile dell'arco
+    const linkVisible = linkGroup.append("line")
+      .attr("stroke", d => {
+        const srcId = typeof d.source === 'object' ? d.source.id : d.source;
+        const tgtId = typeof d.target === 'object' ? d.target.id : d.target;
+        const key = getEdgeKey(srcId, tgtId);
+
+        if (key === selectedEdgeKey) return "#0f172a";
+        return d.isVirtual ? "#cbd5e1" : (EDGE_CLASS_COLORS[(d.distance_class || "INVARIATI").toUpperCase()] || "#94a3b8");
+      })
+      .attr("stroke-width", d => {
+        const srcId = typeof d.source === 'object' ? d.source.id : d.source;
+        const tgtId = typeof d.target === 'object' ? d.target.id : d.target;
+        const key = getEdgeKey(srcId, tgtId);
+
+        if (key === selectedEdgeKey) return 5.0;
+        return d.isVirtual ? 1.5 : 2.5;
+      })
+      .attr("stroke-dasharray", d => d.isVirtual ? "4,4" : "none")
+      .style("cursor", "pointer");
+
+    // Gestore Click sull'Arco
+    function handleEdgeClick(event, d) {
+      event.stopPropagation();
+      const srcId = typeof d.source === 'object' ? d.source.id : d.source;
+      const tgtId = typeof d.target === 'object' ? d.target.id : d.target;
+
+      selectedEdgeKey = getEdgeKey(srcId, tgtId);
+
+      const initialClass = d.isVirtual ? d.distance_class : (d.distance_class || "INVARIATI");
+      renderEdgePanel(srcId, tgtId, initialClass);
+      scheduleDraw();
+    }
+
+    linkHitArea.on("click", handleEdgeClick);
+    linkVisible.on("click", handleEdgeClick);
+
+    // --- RENDERING NODI ---
     const node = g.append("g")
       .selectAll("circle")
       .data(nodes)
@@ -367,7 +534,6 @@ export function render({ model, el }) {
       });
     });
 
-    // Binding corretto del drag rispetto allo zoom
     const drag = d3.drag()
       .container(g.node())
       .on("start", (event, d) => {
@@ -388,76 +554,44 @@ export function render({ model, el }) {
         d.fy = event.y;
         d.x = event.x;
         d.y = event.y;
-
-        const batch = [];
-        links.forEach(l => {
-          const srcId = typeof l.source === 'object' ? l.source.id : l.source;
-          const tgtId = typeof l.target === 'object' ? l.target.id : l.target;
-
-          if (str(srcId) === str(d.id) || str(tgtId) === str(d.id)) {
-            const dx = l.target.x - l.source.x;
-            const dy = l.target.y - l.source.y;
-            const currentDist = Math.hypot(dx, dy);
-            const factor = currentDist / BASE_DISTANCE;
-
-            l.distance_factor = factor;
-            batch.push({
-              chunk_1: srcId,
-              chunk_2: tgtId,
-              distance_factor: factor
-            });
-          }
-        });
-
-        if (batch.length > 0) {
-          model.set("pairwise_edits_batch", batch);
-          model.save_changes();
-        }
-
         updatePositions();
       });
 
     node.call(drag);
 
+    // Evento Click sul Nodo
     node.on("click", (event, d) => {
+      event.stopPropagation();
       if (str(selectedNodeId) !== str(d.id)) {
-        inputTag.property("value", ""); // Reset input cambio nodo
+        inputTag.property("value", "");
       }
 
       selectedNodeId = d.id;
-      renderDetailPanel();
-
-      node.attr("stroke", n => str(n.id) === str(d.id) ? "#000000" : "#ffffff")
-          .attr("stroke-width", n => str(n.id) === str(d.id) ? 3 : 2);
+      scheduleDraw();
 
       model.set("selected_tag", { id: d.id, text: d.text || "" });
       model.save_changes();
     });
 
     function updatePositions() {
-      link
+      linkHitArea
         .attr("x1", d => d.source.x)
         .attr("y1", d => d.source.y)
         .attr("x2", d => d.target.x)
         .attr("y2", d => d.target.y);
 
-      linkText
-        .attr("x", d => (d.source.x + d.target.x) / 2)
-        .attr("y", d => (d.source.y + d.target.y) / 2 - 5)
-        .text(d => {
-          const dx = d.target.x - d.source.x;
-          const dy = d.target.y - d.source.y;
-          const dist = Math.round(Math.hypot(dx, dy));
-          const factor = (dist / BASE_DISTANCE).toFixed(2);
-          return `${dist}px (${factor}x)`;
-        });
+      linkVisible
+        .attr("x1", d => d.source.x)
+        .attr("y1", d => d.source.y)
+        .attr("x2", d => d.target.x)
+        .attr("y2", d => d.target.y);
 
       node.attr("cx", d => d.x).attr("cy", d => d.y);
       label.attr("x", d => d.x).attr("y", d => d.y);
     }
 
     simulation.on("tick", updatePositions);
-    updatePositions(); // Posizionamento istantaneo
+    updatePositions();
   }
 
   function scheduleDraw() {

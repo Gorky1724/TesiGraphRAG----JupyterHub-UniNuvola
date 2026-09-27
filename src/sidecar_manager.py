@@ -1,9 +1,14 @@
+import sys
 import json
 import copy
 import time
 from pathlib import Path
 from typing import Any, Dict, Optional, List
 
+project_root = Path("~/tesi_graphrag").expanduser().resolve()
+if str(project_root) not in sys.path:
+    sys.path.insert(0, str(project_root))
+from src.config import DISTANCE_CLASS_FACTORS
 
 class SidecarManager:
     """
@@ -21,6 +26,11 @@ class SidecarManager:
     #  Un implementazione singleton avrebbe complicato molto il codice, invece tramite
     #  questa accortezza se si istanzia una seconda istanza viene stampato un avviso (non bloccante)
     _seen_paths: set = set()
+
+    DEFAULT_PALETTE = [
+        "#4e79a7", "#f28e2b", "#e15759", "#76b7b2", "#59a14f",
+        "#edc949", "#af7aa1", "#ff9da7", "#9c755f", "#bab0ab"
+    ] # Colori di Default se non ne vengono assegnati altri
 
     def __init__(self, filepath="sidecar_edits.json"):
         # Inizializzazione di default; modificabile passandogli un diverso path come parametro
@@ -45,16 +55,17 @@ class SidecarManager:
 
         self._ensure_file_exists()
 
+    ### Accesso e gestione dati e cache
+
     def _ensure_file_exists(self):
         self.filepath.parent.mkdir(parents=True, exist_ok=True)
         if not self.filepath.exists():
             self.reset_all()
 
-    ### Accesso e gestione dati e cache
     @property
     def data(self) -> dict:
-        """Garantisce l'accesso diretto ai dati leggendoli sempre aggiornati dal file."""
-        return self.load_data()
+        """Accesso ai dati aggiornati forzando automaticamente il reload"""
+        return self.load_data(force_reload=False)
 
     def load_data(self, force_reload: bool=False) -> dict:
         """
@@ -87,7 +98,7 @@ class SidecarManager:
 
 
         default_structure = {
-            "pairwise_deltas": {},
+            "modified_adjacencies": {},
             "tag_overrides": {},
             "global_tags": {}
         }
@@ -131,63 +142,102 @@ class SidecarManager:
         data = self.load_data()
         return data.get("global_tags", {})
 
-    ### Manipolazione Distanze
-    def save_pairwise_delta(self, chunk_id_1: str, chunk_id_2: str, distance_factor: float):
+    ### Manipolazione Classi di Distanza
+    def save_pairwise_class_edits(self, chunk_id_1: str, chunk_id_2: str, distance_class: Optional[str]):
         """
-        Salva o aggiorna il fattore di distanza tra una coppia di chunk.
-        Garantisce la simmetria della relazione (A_B == B_A).
+        Salva o aggiorna la classe di distanza tra una coppia di chunk.
+        Garantisce simmetria (chunk_1 <-> chunk_2) e pulizia automatica se la classe
+        dovesse essere "INVARIATI" o non presente in DISTANCE_CLASS_FACTORS.
         """
+        c1, c2 = str(chunk_id_1), str(chunk_id_2)
+        if c1 == c2:
+            return
+
         data = self.load_data()
+        adj = data.setdefault("modified_adjacencies", {}) # Recupera valore associato alla chiave
 
-        # Ordiniamo gli ID per garantire che la relazione sia simmetrica
-        pair_key = "_AND_".join(sorted([str(chunk_id_1), str(chunk_id_2)]))
+        norm_class = str(distance_class).upper().strip() if distance_class is not None else "INVARIATI"
+        if norm_class not in DISTANCE_CLASS_FACTORS:
+            norm_class = "INVARIATI"
 
-        if "pairwise_deltas" not in data:
-            data["pairwise_deltas"] = {}
+        if norm_class == "INVARIATI":
+            # Pulizia automatica; rimozione voce mantiene .json più leggero possibile
+            if c1 in adj and c2 in adj[c1]:
+                del adj[c1][c2]
+                if not adj[c1]:
+                    del adj[c1]
 
-        data["pairwise_deltas"][pair_key] = {
-            "chunk_1": str(chunk_id_1),
-            "chunk_2": str(chunk_id_2),
-            "distance_factor": round(distance_factor, 3)
-        }
+            if c2 in adj and c1 in adj[c2]:
+                del adj[c2][c1]
+                if not adj[c2]:
+                    del adj[c2]
+
+            print(f"<<| Adiacenza rimossa (ripristino a INVARIATI) tra [{c1}] e [{c2}] |>>")
+        else:
+             # Assegnazione simmetrica
+            adj.setdefault(c1, {})[c2] = {"distance_class": norm_class}
+            adj.setdefault(c2, {})[c1] = {"distance_class": norm_class}
+            print(f"<<| Modifica adiacenza salvata tra [{c1}] e [{c2}]: classe={norm_class} |>>")
 
         self.save_data(data)
-        print(f"<<| Modifica salvata per la coppia [{pair_key}]: factor={distance_factor:.2f} |>>")
 
-    def save_pairwise_deltas_batch(self, edits: list):
+    def save_pairwise_class_edits_batch(self, edits: List[Dict[str, Any]]):
         """
-        Salva un blocco di modifiche pairwise in un unica operazione I/=
+        Salva un blocco di modifiche adiacenze in un'unica operazione di I/O.
+        Ogni voce di 'edits' deve contenere: 'chunk_1', 'chunk_2', 'distance_class'.
         """
         if not edits or not isinstance(edits, list):
             return
 
         data = self.load_data()
-        if "pairwise_deltas" not in data:
-            data["pairwise_deltas"] = {}
-
+        adj = data.setdefault("modified_adjacencies", {})
         updated = False
+
         for edit in edits:
             if edit and "chunk_1" in edit and "chunk_2" in edit:
                 c1, c2 = str(edit["chunk_1"]), str(edit["chunk_2"])
-                pair_key = "_AND_".join(sorted([c1, c2]))
-                data["pairwise_deltas"][pair_key] = {
-                    "chunk_1": c1,
-                    "chunk_2": c2,
-                    "distance_factor": round(float(edit["distance_factor"]), 3)
-                }
+                if c1 == c2:
+                    continue
+                d_cls = edit.get("distance_class")
+                norm_class = str(d_cls).upper().strip() if d_cls is not None else "INVARIATI"
+
+                if norm_class not in DISTANCE_CLASS_FACTORS:
+                    norm_class = "INVARIATI"
+
+                if norm_class == "INVARIATI":
+                    if c1 in adj and c2 in adj[c1]:
+                        del adj[c1][c2]
+                        if not adj[c1]:
+                            del adj[c1]
+                    if c2 in adj and c1 in adj[c2]:
+                        del adj[c2][c1]
+                        if not adj[c2]:
+                            del adj[c2]
+                else:
+                    adj.setdefault(c1, {})[c2] = {"distance_class": norm_class}
+                    adj.setdefault(c2, {})[c1] = {"distance_class": norm_class}
                 updated = True
 
         if updated:
             self.save_data(data)
-            print(f"<<| Batch salvato: {len(edits)} distanze aggiornate nel sidecar |>>")
+            print(f"<<| Batch adiacenze salvato: {len(edits)} elementi processati |>>")
 
+    # Estrazione adiacenze
+    def get_chunk_adjacencies(self, chunk_id: str) -> Dict[str, Dict[str, str]]:
+        """
+        Restituisce il dizionario delle adiacenze modificate per un singolo chunk.
+        es. return format: {'chunk_2': {'distance_class': 'AVVICINATI'}}
+        """
+        data = self.load_data()
+        adj = data.get("modified_adjacencies", {})
+        return adj.get(str(chunk_id), {})
+
+    def get_all_modified_adjacencies(self) -> Dict[str, Dict[str, Dict[str, str]]]:
+        """Restituisce l'intero dizionario delle adiacenze modificate."""
+        data = self.load_data()
+        return data.get("modified_adjacencies", {})
 
     ### Manipolazione TAG
-    DEFAULT_PALETTE = [
-        "#4e79a7", "#f28e2b", "#e15759", "#76b7b2", "#59a14f",
-        "#edc949", "#af7aa1", "#ff9da7", "#9c755f", "#bab0ab"
-    ] # Colori di Default se non ne vengono assegnati altri
-
     def add_tag_override(self, chunk_id: str, tag: str, color: str=None):
         """
         Aggiunge un tag a un chunk, assegna un colore e aggiorna il registro globale
@@ -365,7 +415,7 @@ class SidecarManager:
     def reset_all(self):
         """Ripristina il file sidecar azzerando le modifiche (UNDO globale)."""
         self.save_data({
-            "pairwise_deltas": {},
+            "modified_adjacencies": {},
             "tag_overrides": {},
             "global_tags": {}
         })

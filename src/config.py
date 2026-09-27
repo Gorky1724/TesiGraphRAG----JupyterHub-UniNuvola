@@ -114,3 +114,20 @@ TAG_ASSIGN_THRESHOLD = 0.50
 TAG_WEIGHT_COSINE = 0.70
 TAG_WEIGHT_OVERLAP = 0.30
 """
+
+# ======================================================================
+# PARAMETRI RERANKING per CLASSI DI DISTANZA
+# ======================================================================
+
+DISTANCE_CLASS_FACTORS = {
+    "MOLTO_AVVICINATI": 0.35, # Bonus
+    "AVVICINATI": 0.70,
+    "INVARIATI": 1.00, # Neutrale: Stato pre-alterazione
+    "ALLONTANATI": 1.50,
+    "MOLTO_ALLONTANATI": 3.00, # Penalizzazione
+}
+
+
+def get_distance_factor(distance_class: str) -> float:
+    """Restituisce il valore numerico del fattore di distanza per la classe richiesta."""
+    return DISTANCE_CLASS_FACTORS.get(distance_class.upper(), 1.0)
