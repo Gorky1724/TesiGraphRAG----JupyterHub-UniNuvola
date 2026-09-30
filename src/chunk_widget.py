@@ -53,11 +53,26 @@ class ChunkGraphWidget(anywidget.AnyWidget):
         adj = data.get("modified_adjacencies", {})
         overrides = data.get("tag_overrides", {})
 
+        # Info sui nodi
+        nodes = raw_graph_data.get("nodes", [])
+        enriched_nodes = []
+        valid_node_ids = set()
+
+        for node in nodes:
+            n_copy = dict(node)
+            cid = str(n_copy.get("id"))
+            valid_node_ids.add(cid)
+            if cid in overrides:
+                n_copy["user_tags"] = overrides[cid].get("user_tags", [])
+            elif "user_tags" not in n_copy:
+                n_copy["user_tags"] = n_copy.get("tags", [])
+            enriched_nodes.append(n_copy)
+
+        # Archi e struttura a adiacenza
         raw_links = raw_graph_data.get("links", [])
         enriched_links = []
         existing_pairs = set()
 
-        # Archi e struttura a adiacenza
         for link in raw_links:
             l_copy = dict(link)
             src = str(l_copy["source"]["id"] if isinstance(l_copy["source"], dict) else l_copy["source"])
@@ -74,6 +89,8 @@ class ChunkGraphWidget(anywidget.AnyWidget):
 
             factor = DISTANCE_CLASS_FACTORS.get(distance_class, 1.0)
 
+            l_copy["source"] = src
+            l_copy["target"] = tgt
             l_copy["distance_class"] = distance_class
             l_copy["distance_factor"] = factor
             enriched_links.append(l_copy)
@@ -95,21 +112,15 @@ class ChunkGraphWidget(anywidget.AnyWidget):
                             "distance_factor": factor
                         })
 
-        # Info sui nodi
-        nodes = raw_graph_data.get("nodes", [])
-        enriched_nodes = []
-        for node in nodes:
-            n_copy = dict(node)
-            cid = str(n_copy.get("id"))
-            if cid in overrides:
-                n_copy["user_tags"] = overrides[cid].get("user_tags", [])
-            elif "user_tags" not in n_copy:
-                n_copy["user_tags"] = n_copy.get("tags", [])
-            enriched_nodes.append(n_copy)
+       # Mantiene soli gli archi con sia source che target trai nodi attivi
+        valid_links = [
+            link for link in enriched_links
+            if str(link["source"]) in valid_node_ids and str(link["target"]) in valid_node_ids
+        ]
 
         self.graph_data = {
             "nodes": enriched_nodes,
-            "links": enriched_links,
+            "links": valid_links,
             "base_distance": BASE_GRAPH_DISTANCE
         }
         self.refresh_global_tags()

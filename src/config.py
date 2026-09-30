@@ -68,13 +68,17 @@ RETRIEVAL_TOP_K = 7  # Numero chunk retrieved da Qdrant con il vector_similarity
 RERANKING_TOP_N = 4   # Numero chunk restituiti dopo il reranking
 
 # ======================================================================
-# CONFIGURAZIONE TAG RERANKER e ASSIGNER
+# CONFIGURAZIONE TAG RERANKER
 # ======================================================================
 
 TAG_BOOST_FACTOR = 0.20   # Boost del +20% per ogni tag in comune tra query e chunk
 TAG_MALUS_FACTOR = 0.00   # Malus dello 0% (nessuna penalizzazione per chunk privi di match)
 # TAG_MALUS_FACTOR = 0.05 # Opzione alternativa per malus leggerissimo (-5%) se desiderato
 MAX_BOOST = 0.50 # Limita il boost per evitare sbilanciamento se combaciano troppi chunk
+
+# ======================================================================
+# CONFIGURAZIONE TAG ASSIGNER
+# ======================================================================
 
 """
 # MULTILANGUAGE
@@ -119,15 +123,27 @@ TAG_WEIGHT_OVERLAP = 0.30
 # PARAMETRI RERANKING per CLASSI DI DISTANZA
 # ======================================================================
 
+TAG_BOOST_ASSIGNED_CONV = 0.20  # Bonus per tag inserito dall'utente (Assigned_TAG / Conversation-TAG). Per il conv_tag si applica solo per match parziali
+TAG_BOOST_AUTO = 0.10 # bonus per tag inferito dal TagAssigner (AUTO-TAG)
+TAG_MAX_BOOST = 0.50 # Cap massimo al moltiplicatore totale derivante dai tag
+
+MIN_ACCEPTED_COS_SIM = 0.10 # Valore sotto cui i chunk vengono scartati anche se avvicinati. Nonostante l'avvicinamento si considerano comunque non corretti per la query in analisi
+
+"""# Scala override pesante
 DISTANCE_CLASS_FACTORS = {
-    "MOLTO_AVVICINATI": 0.35, # Bonus
-    "AVVICINATI": 0.70,
+    "MOLTO_AVVICINATI": 3.00, # Bonus
+    "AVVICINATI": 1.50,
     "INVARIATI": 1.00, # Neutrale: Stato pre-alterazione
-    "ALLONTANATI": 1.50,
-    "MOLTO_ALLONTANATI": 3.00, # Penalizzazione
+    "ALLONTANATI": 0.70,
+    "MOLTO_ALLONTANATI": 0.35, # Penalizzazione
 }
+"""
 
-
-def get_distance_factor(distance_class: str) -> float:
-    """Restituisce il valore numerico del fattore di distanza per la classe richiesta."""
-    return DISTANCE_CLASS_FACTORS.get(distance_class.upper(), 1.0)
+# Scala override leggera
+DISTANCE_CLASS_FACTORS = {
+    "MOLTO_AVVICINATI": 1.50, # Bonus
+    "AVVICINATI": 1.25,
+    "INVARIATI": 1.00, # Neutrale: Stato pre-alterazione
+    "ALLONTANATI": 0.75, 
+    "MOLTO_ALLONTANATI": 0.50, # Malus
+}
