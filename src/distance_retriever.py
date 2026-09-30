@@ -5,6 +5,8 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 import numpy as np
 
+from qdrant_client import QdrantClient
+
 project_root = Path("~/tesi_graphrag").expanduser().resolve()
 if str(project_root) not in sys.path:
     sys.path.insert(0, str(project_root))
@@ -34,37 +36,37 @@ def build_query_tags(
     assigned_tags: Optional[List[str]] = None,
     automatic_tags: Optional[List[str]] = None,
 ) -> Dict[str, List[str]]:
-  """Costruisce il dizionario query_tags garantendo la disgiunzione gerarchica dei tag:
-  conversation_tags > assigned_tags > automatic_tags.
-  """
-  seen = set()
+"""Costruisce il dizionario query_tags garantendo la disgiunzione gerarchica dei tag:
+    conversation_tags > assigned_tags > automatic_tags.
+    """
+    seen = set()
 
-  clean_conv: List[str] = []
-  for t in conversation_tags or []:
-    if t and t not in seen:
-      clean_conv.append(t)
-      seen.add(t)
+    clean_conv: List[str] = []
+    for t in conversation_tags or []:
+        if t and t not in seen:
+            clean_conv.append(t)
+            seen.add(t)
 
-  clean_assigned: List[str] = []
-  for t in assigned_tags or []:
-    if t and t not in seen:
-      clean_assigned.append(t)
-      seen.add(t)
+    clean_assigned: List[str] = []
+    for t in assigned_tags or []:
+        if t and t not in seen:
+            clean_assigned.append(t)
+            seen.add(t)
 
-  clean_auto: List[str] = []
-  for t in automatic_tags or []:
-    if t and t not in seen:
-      clean_auto.append(t)
-      seen.add(t)
+    clean_auto: List[str] = []
+    for t in automatic_tags or []:
+        if t and t not in seen:
+            clean_auto.append(t)
+            seen.add(t)
 
-  all_tags: List[str] = clean_conv + clean_assigned + clean_auto
+    all_tags: List[str] = clean_conv + clean_assigned + clean_auto
 
-  return {
-      "conversation_tags": clean_conv,
-      "assigned_tags": clean_assigned,
-      "automatic_tags": clean_auto,
-      "all_tags": all_tags,
-  }
+    return {
+        "conversation_tags": clean_conv,
+        "assigned_tags": clean_assigned,
+        "automatic_tags": clean_auto,
+        "all_tags": all_tags,
+    }
 
 class DistanceRetriever:
     """
@@ -75,13 +77,18 @@ class DistanceRetriever:
 
     def __init__(
         self,
-        qdrant_client: Any,
-        collection_name:  str=COLLECTION_NAME,
-        sidecar_manager: Optional[SidecarManager] = None
+        qdrant_client: QdrantClient,
+        sidecar_manager: SidecarManager,
+        collection_name: str = COLLECTION_NAME
     ):
+        if sidecar_manager is None:
+            raise ValueError("!!!>>> sidecar_manager è obbligatorio e non può essere None.")
+        if qdrant_client is None:
+            raise ValueError("!!!>>> qdrant_client è obbligatorio e non può essere None.")
+
         self.qdrant_client = qdrant_client
+        self.sidecar_manager = sidecar_manager
         self.collection_name = collection_name
-        self.sidecar_manager = sidecar_manager or SidecarManager()
 
     def retrieve_close(
         self,
@@ -96,10 +103,10 @@ class DistanceRetriever:
         Args:
             to_analyze: Punti da analizzare per trovare i vicini. Possono essere oggetti di Qdrant o dizionari
             order_by: Lista di flag che regolano filtri e moltiplicatori:
-                      - "CONV_TAG_ONLY": Filtro rigido (ALL match sui conversation_tags).
-                      - "DIST": Applica il fattore moltiplicativo della classe di distanza.
-                      - "TAGS": Applica bonus di sovrapposizione dei tag.
-                      - "SCORE" o "": Calcola unicamente la similarità coseno base. Se presente con altri, questo NON ha la priorità.
+                    - "CONV_TAG_ONLY": Filtro rigido (ALL match sui conversation_tags).
+                    - "DIST": Applica il fattore moltiplicativo della classe di distanza.
+                    - "TAGS": Applica bonus di sovrapposizione dei tag.
+                    - "SCORE" o "": Calcola unicamente la similarità coseno base. Se presente con altri, questo NON ha la priorità.
             top_m: Numero massimo di vicini da restituire dopo l'ordinamento.
             query_vector: Vettore di embedding della query.
             query_tags: Dizionario contenente i tag della query divisi per categoria:
@@ -245,9 +252,9 @@ class DistanceRetriever:
             # cos_sim con query, sempre necessaria
             raw_vector = getattr(rec, "vector", None)
             if isinstance(raw_vector, dict): # gestisce sia liste/array che dict come vettori
-              chunk_vector = next(iter(raw_vector.values())) if raw_vector else None
+                chunk_vector = next(iter(raw_vector.values())) if raw_vector else None
             else:
-              chunk_vector = raw_vector
+                chunk_vector = raw_vector
 
             if chunk_vector is None:
                 logger.warning("!> Impossibile reperire il vettore per '%s'. Chunk SALTATO.", chunk_id,)

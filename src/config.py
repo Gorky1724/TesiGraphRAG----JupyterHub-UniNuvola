@@ -127,7 +127,7 @@ TAG_BOOST_ASSIGNED_CONV = 0.20  # Bonus per tag inserito dall'utente (Assigned_T
 TAG_BOOST_AUTO = 0.10 # bonus per tag inferito dal TagAssigner (AUTO-TAG)
 TAG_MAX_BOOST = 0.50 # Cap massimo al moltiplicatore totale derivante dai tag
 
-MIN_COSINE_THRESHOLD = 0.10 # Valore sotto cui i chunk vengono scartati anche se avvicinati. Nonostante l'avvicinamento si considerano comunque non corretti per la query in analisi
+MIN_COSINE_THRESHOLD = 0.10 # Valore sotto cui i chunk, nel DISTANCE_RETRIEVER, vengono scartati anche se avvicinati. Nonostante l'avvicinamento si considerano comunque non corretti per la query in analisi per una cos_sim nativa troppo bassa
 
 """# Scala override pesante
 DISTANCE_CLASS_FACTORS = {
