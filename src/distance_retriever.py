@@ -36,7 +36,7 @@ def build_query_tags(
     assigned_tags: Optional[List[str]] = None,
     automatic_tags: Optional[List[str]] = None,
 ) -> Dict[str, List[str]]:
-"""Costruisce il dizionario query_tags garantendo la disgiunzione gerarchica dei tag:
+    """Costruisce il dizionario query_tags garantendo la disgiunzione gerarchica dei tag:
     conversation_tags > assigned_tags > automatic_tags.
     """
     seen = set()
