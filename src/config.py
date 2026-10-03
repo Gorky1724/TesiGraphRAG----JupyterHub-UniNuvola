@@ -147,3 +147,8 @@ DISTANCE_CLASS_FACTORS = {
     "ALLONTANATI": 0.75, 
     "MOLTO_ALLONTANATI": 0.50, # Malus
 }
+
+# ======================================================================
+# PARAMETRI PRE_DETERMINED_QUERY
+# ======================================================================
+PREDET_QUERY_THRESHOLD = 0.85 # Valore di similarità sopra cui una query viene considerata identica a una predeterminata
