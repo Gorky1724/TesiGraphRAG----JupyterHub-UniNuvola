@@ -19,6 +19,7 @@ export function render({ model, el }) {
   let selectedEdgeKey = null; // Memorizza la chiave dell'arco selezionato
   let currentNodes = [];
 
+  /*
   //palette blu-azzurro-grigi-arancione-rosso
   const EDGE_CLASSES = [
     { name: "MOLTO_AVVICINATI", label: "  Molto Avvicinati", color: "#1d4ed8" },
@@ -27,6 +28,7 @@ export function render({ model, el }) {
     { name: "ALLONTANATI", label: "  Allontanati", color: "#f97316" },
     { name: "MOLTO_ALLONTANATI",label: "  Molto Allontanati",color: "#dc2626" }
   ];
+  */
 
   /*
   // palette alternativa verde scuro-verde chiaro-grigio-arancione-rosso
@@ -36,8 +38,17 @@ export function render({ model, el }) {
       { name: "INVARIATI", label: "  Invariati", color: "#64748b" },
       { name: "ALLONTANATI", label: "  Allontanati", color: "#f97316" },
       { name: "MOLTO_ALLONTANATI", label: "  Molto Allontanati", color: "#ef4444" }
-    ];
+  ];
   */
+    
+  // palette alternativa viola-azzurro-grigio-arancione-rosso
+  const EDGE_CLASSES = [
+      { name: "MOLTO_AVVICINATI", label: "  Molto Avvicinati", color: "#e314b1" },
+      { name: "AVVICINATI", label: "  Avvicinati", color: "#06b6d4" },
+      { name: "INVARIATI", label: "  Invariati", color: "#64748b" },
+      { name: "ALLONTANATI", label: "  Allontanati", color: "#f97316" },
+      { name: "MOLTO_ALLONTANATI", label: "  Molto Allontanati", color: "#ef4444" }
+  ];
 
   const EDGE_CLASS_COLORS = Object.fromEntries(
     EDGE_CLASSES.map(c => [c.name, c.color])

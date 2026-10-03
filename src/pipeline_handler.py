@@ -310,7 +310,7 @@ class PipelineHandler:
                 print(f"           |> final_score: {[r.get('final_score', 'not-found')]}")
 
     ### Visualizzazione Grafo
-    def build_graph_data(self, records: List[Any]) -> Dict[str, Any]:
+    def build_graph_data(self, records: Optional[List[Any]] = None) -> Dict[str, Any]:
         """
         Costruisce il dizionario JSON del grafo a partire da una lista di record
         (accetta sia oggetti ScoredPoint di Qdrant che dizionari del Reranker).
@@ -329,7 +329,7 @@ class PipelineHandler:
             else:
                 payload = getattr(rec, "payload", {}) or {}
                 vector = getattr(rec, "vector", None)
-                cid = getattr(rec, "id", None)
+                cid = None  # Non si usa rec.id per evitare di sovrascrivere l'ID dei metadati con l'UUID di Qdrant
 
             meta = payload.get("metadata") if isinstance(payload.get("metadata"), dict) else payload
             doc_id = payload.get("doc_id") or meta.get("doc_id") or "doc"
@@ -337,14 +337,26 @@ class PipelineHandler:
             raw_idx = payload.get("chunk_index") if payload.get("chunk_index") is not None else meta.get("chunk_index")
             chunk_idx = raw_idx if raw_idx is not None else idx
 
-            chunk_id = cid or payload.get("chunk_id") or meta.get("chunk_id") or f"{doc_id}_chunk_{chunk_idx}"
+            # Priorità al chunk_id salvato nei metadati del payload
+            chunk_id = (
+                cid
+                or payload.get("chunk_id")
+                or meta.get("chunk_id")
+                or f"{doc_id}_chunk_{chunk_idx}"
+            )
 
             # Deduplica eventuali chunk_id già inseriti
             if chunk_id in seen_chunk_ids:
                 continue
             seen_chunk_ids.add(chunk_id)
 
-            text = payload.get("text", payload.get("page_content", ""))
+            text = (
+                payload.get("text")
+                or meta.get("text")
+                or payload.get("page_content")
+                or meta.get("page_content")
+                or ""
+            )
 
             base_tags = payload.get("user_tags") or meta.get("user_tags") or payload.get("tags") or meta.get("tags") or []
             chunk_sidecar_info = tag_overrides.get(chunk_id, {})
@@ -389,3 +401,81 @@ class PipelineHandler:
         graph_data = self.get_phase_graph_data(phase)
         self.widget.load_graph(graph_data)
         logger.info(f"?> Widget aggiornato alla fase '{phase}' ({len(graph_data['nodes'])} nodi)")
+
+    ### Risposta LLM
+    def generate_rag_response(
+        self,
+        records: Optional[List[Any]] = None,
+    ):
+        """
+        Costruisce il contesto e il prompt strutturato su una lista di record e lo invia all'LLM,
+        restituendo un dizionario contentente prompt, risposta, contesto e chunk_id utilizzati.
+        """
+        query_str = self.query_text
+        records_to_use = records if records is not None else (self.top_j_reranked or self.raw_records or [])
+
+        if not records_to_use:
+            logger.warning("!> Nessun record fornito per la generazione RAG.")
+
+        context_blocks = []
+        chunk_ids = []
+        for idx, rec in enumerate(records_to_use, start=1):
+            if isinstance(rec, dict):
+                payload = rec.get("payload", rec)
+                cid = rec.get("chunk_id", f"chunk_{idx}")
+                score = rec.get("final_score", rec.get("initial_score", 0.0))
+            else:
+                payload = getattr(rec, "payload", {}) or {}
+                cid = payload.get("chunk_id") or getattr(rec, "id", f"chunk_{idx}")
+                score = getattr(rec, "score", 0.0)
+
+            meta = payload.get("metadata") if isinstance(payload.get("metadata"), dict) else payload
+            text_content = (
+                payload.get("text")
+                or meta.get("text")
+                or payload.get("page_content")
+                or meta.get("page_content")
+                or ""
+            )
+
+            chunk_ids.append(cid)
+            context_blocks.append(
+                f"[CHUNK {idx} | ID: {cid} | Score: {score:.4f}]\n{text_content.strip()}"
+            )
+
+        full_context = "\n\n".join(context_blocks)
+
+        prompt = (
+            "Sei un assistente di ricerca. Rispondi alla domanda seguente basandoti "
+            "ESCLUSIVAMENTE sul contesto fornito. Se il contesto non contiene informazioni sufficienti "
+            "o è parziale, evidenzialo chiaramente senza inventare fatti non presenti nelle fonti.\n\n"
+            f"Domanda: {query_str}\n\n"
+            f"Contesto recuperato ({len(records_to_use)} chunk):\n{full_context}\n\n"
+            "Risposta:"
+        )
+
+        logger.info("?> Invocazione LLM")
+        response = self.llm.invoke(prompt)
+        response_text = response.content.strip() if hasattr(response, "content") else str(response).strip()
+
+        return {
+            "query": query_str,
+            "prompt": prompt,
+            "response": response_text,
+            "chunk_ids": chunk_ids,
+            "context": full_context
+        }
+
+    def compare_retrieval_vs_reranking(self):
+        """
+        Esegue la generazione RAG per il 1° retrieval vettoriale (raw_records)
+        e per il post-reranking (top_j_reranked), restituendo il confronto completo.
+        """
+
+        baseline_res = self.generate_rag_response(records=self.raw_records or [])
+        reranked_res = self.generate_rag_response(records=self.top_j_reranked or [])
+
+        return {
+            "vectorial_baseline": baseline_res,
+            "post_reranking": reranked_res
+        }
