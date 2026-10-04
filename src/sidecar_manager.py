@@ -541,3 +541,15 @@ class SidecarManager:
         if updated:
             self.save_data(data)
             print(f"<<| Batch adiacenze query pre-determinate salvato: {len(edits)} elementi processati |>>")
+
+    ### Recupero generalizzato TAG e ADIACENZE
+    def get_node_tags(self, node_id: str) -> list:
+        """Restituisce i tag di un nodo gestendo sia i chunk sia le predq_."""
+        data = self.data
+        node_id = str(node_id)
+        if node_id.startswith("predq_"):
+            q_info = data.get("predetermined_queries", {}).get(node_id, {})
+            return q_info.get("graphically_assigned_tags", [])
+        else:
+            return data.get("tag_overrides", {}).get(node_id, {}).get("user_tags", [])
+

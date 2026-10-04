@@ -50,8 +50,20 @@ class ChunkGraphWidget(anywidget.AnyWidget):
         """Carica il grafo applicando immediatamente i distance_factor salvati nel sidecar."""
         self._raw_graph_data = raw_graph_data
         data = self.sidecar.load_data()
-        adj = data.get("modified_adjacencies", {})
         overrides = data.get("tag_overrides", {})
+
+        # Unificazione delle adiacenze (modified_adjacencies + predetermined_queries)
+        adj = {}
+        for k, v in data.get("modified_adjacencies", {}).items():
+            adj[k] = dict(v)
+
+        pred_queries = data.get("predetermined_queries", {})
+        for pred_id, q_info in pred_queries.items():
+            q_adj = q_info.get("adjacencies", {})
+            if q_adj:
+                if pred_id not in adj:
+                    adj[pred_id] = {}
+                adj[pred_id].update(q_adj)
 
         # Info sui nodi
         nodes = raw_graph_data.get("nodes", [])
@@ -62,7 +74,10 @@ class ChunkGraphWidget(anywidget.AnyWidget):
             n_copy = dict(node)
             cid = str(n_copy.get("id"))
             valid_node_ids.add(cid)
-            if cid in overrides:
+            if cid.startswith("predq_"):
+                q_info = pred_queries.get(cid, {})
+                n_copy["user_tags"] = q_info.get("graphically_assigned_tags", [])
+            elif cid in overrides:
                 n_copy["user_tags"] = overrides[cid].get("user_tags", [])
             elif "user_tags" not in n_copy:
                 n_copy["user_tags"] = n_copy.get("tags", [])
@@ -154,14 +169,14 @@ class ChunkGraphWidget(anywidget.AnyWidget):
         Aggiorna i tag del nodo specifico in graph_data per forzare il ridisegno.
         Semplicemente ricrea e riposiziona i dati (uguali) nel nodo del chunk per forzare il re-render
         """
-        data = self.sidecar.load_data()
-        chunk_overrides = data.get("tag_overrides", {}).get(str(chunk_id), {})
-        user_tags = chunk_overrides.get("user_tags", [])
+        chunk_id_str = str(chunk_id)
+        # Usa la funzione helper generalizzata per leggere correttamente anche da predetermined_queries
+        user_tags = self.sidecar.get_node_tags(chunk_id_str)
 
         new_graph_data = dict(self.graph_data)
         nodes = [dict(n) for n in new_graph_data.get("nodes", [])]
         for n in nodes:
-            if str(n.get("id")) == str(chunk_id):
+            if str(n.get("id")) == chunk_id_str:
                 n["user_tags"] = user_tags
         new_graph_data["nodes"] = nodes
         self.graph_data = new_graph_data
@@ -189,3 +204,4 @@ class ChunkGraphWidget(anywidget.AnyWidget):
             self.sidecar.save_pairwise_class_edits_batch(edits)
             if self._raw_graph_data.get("nodes"):
                 self.load_graph(self._raw_graph_data)
+
