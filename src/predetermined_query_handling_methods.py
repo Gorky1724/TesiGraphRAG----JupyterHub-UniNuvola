@@ -176,7 +176,6 @@ def add_predetermined_query(
 
 
 ### 3. Conversione Batch da File (es. eval_queries.json)
-
 def add_predetermined_queries_from_file(
     queries_path: Union[str, Path],
     sidecar_manager: SidecarManager,

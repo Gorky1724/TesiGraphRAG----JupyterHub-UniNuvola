@@ -40,7 +40,7 @@ export function render({ model, el }) {
       { name: "MOLTO_ALLONTANATI", label: "  Molto Allontanati", color: "#ef4444" }
   ];
   */
-    
+
   // palette alternativa viola-azzurro-grigio-arancione-rosso
   const EDGE_CLASSES = [
       { name: "MOLTO_AVVICINATI", label: "  Molto Avvicinati", color: "#e314b1" },
@@ -354,7 +354,11 @@ export function render({ model, el }) {
     }
 
     addTagBox.style("display", "flex");
-    detailHeader.text(`ID ${nodeData.id}`);
+    if (str(nodeData.id).startsWith("predq_")) {
+      detailHeader.text(`*Q* Query Pre-determinata: ${nodeData.id}`).style("color", "#b45309");
+    } else {
+      detailHeader.text(`ID ${nodeData.id}`).style("color", "#0f172a");
+    }
     detailText.text(nodeData.text || "Nessun testo associato.");
 
     currentTagsContainer.html("");
@@ -522,21 +526,30 @@ export function render({ model, el }) {
       .selectAll("circle")
       .data(nodes)
       .enter().append("circle")
-      .attr("r", 13)
+      .attr("r", d => str(d.id).startsWith("predq_") ? 17 : 13) // Raggio maggiorato per Query
       .attr("fill", d => getNodeFill(d, globalTags))
-      .attr("stroke", d => str(d.id) === str(selectedNodeId) ? "#000000" : "#ffffff")
-      .attr("stroke-width", d => str(d.id) === str(selectedNodeId) ? 3 : 2)
+      .attr("stroke", d => {
+        if (str(d.id) === str(selectedNodeId)) return "#000000";
+        if (str(d.id).startsWith("predq_")) return "#d97706"; // Bordo ambra/oro per Query
+        return "#ffffff";
+      })
+      .attr("stroke-width", d => {
+        if (str(d.id) === str(selectedNodeId)) return 4;
+        if (str(d.id).startsWith("predq_")) return 3.5;
+        return 2;
+      })
       .style("cursor", "grab");
 
     const label = g.append("g")
       .selectAll("text")
       .data(nodes)
       .enter().append("text")
-      .text(d => d.id)
+      .text(d => str(d.id).startsWith("predq_") ? `*Q* ${d.id}` : d.id)
       .attr("font-size", "11px")
-      .attr("dx", 16)
+      .attr("font-weight", d => str(d.id).startsWith("predq_") ? "bold" : "normal")
+      .attr("dx", d => str(d.id).startsWith("predq_") ? 20 : 16)
       .attr("dy", 4)
-      .attr("fill", "#1e293b");
+      .attr("fill", d => str(d.id).startsWith("predq_") ? "#b45309" : "#1e293b");
 
     simulation.on("end", () => {
       nodes.forEach(n => {
@@ -628,3 +641,4 @@ export function render({ model, el }) {
     model.off("change:global_tags", scheduleDraw);
   };
 }
+

@@ -27,6 +27,13 @@ from src.config import (
     RERANKING_TOP_N
 )
 
+from src.config import (
+    TAG_ASSIGN_THRESHOLD,
+    TAG_WEIGHT_COSINE,
+    TAG_WEIGHT_OVERLAP
+)
+from src.pre_tagger import PreTagger
+
 from src.sidecar_manager import SidecarManager
 from src.graph_builder import KnowledgeGraphBuilder
 from src.chunk_widget import ChunkGraphWidget
@@ -34,6 +41,11 @@ from src.tag_assigner import TagAssigner
 
 from src.distance_retriever import DistanceRetriever, build_query_tags
 from src.distance_tag_reranker import DistanceTagReranker
+from src.pred_query_verifier import (
+    verify_if_pred_query,
+    add_predetermined_query,
+    add_predetermined_queries_from_file
+)
 
 # [DEBUG: Logger]
 logger = logging.getLogger(__name__)
@@ -86,6 +98,10 @@ class PipelineHandler:
         self.query_text = ""
         self.queries_path = queries_path
         self.query_vector = None
+
+        self.is_predq = False
+        self.predq_id = None
+        self.predq_data = None
 
         self.conversation_tags = []
         self.assigned_tags = []
@@ -173,6 +189,22 @@ class PipelineHandler:
         self.query_vector = self.embeddings.embed_query(self.query_text)
         logger.info(f"?> Vettore embedding Query aggiornato: text:{self.query_text}")
 
+        logger.info(f"?> Verifica match della nuova query con le query pre-determinate")
+        pdid, pddt = verify_if_pred_query(
+            query_text=self.query_text,
+            sidecar_manager=self.sidecar_manager,
+            query_vector=self.query_vector,
+            embedder=self.embeddings
+        )
+        if pdid or pddt:
+            self.is_predq = True
+            self.predq_id = pdid
+            self.predq_data = pddt
+        else:
+            self.is_predq = False
+            self.predq_id = None
+            self.predq_data = None
+
     def print_current_global_tags(self):
         """
         Stampa i tag globali attualmente in uso.
@@ -222,7 +254,7 @@ class PipelineHandler:
             print("!>> Tag assegnati alla query:")
             print(f"   >>> Tag di Conversazione: {self.query_tags.get('conversation_tags', [])}")
             print(f"   >>> Tag Manuali della Query: {self.query_tags.get('assigned_tags', [])}")
-            if self.auto_tag_assignation:
+            if self.auto_tag_assignation: 
                 if global_tags:
                     print(f"   >>> Tag Automaticamente assegnati alla Query: {self.query_tags.get('automatic_tags', [])}")
                     print(f"       |> Tag Globali disponibili: {global_tags}")
@@ -231,6 +263,79 @@ class PipelineHandler:
             else:
                 print("   >>> Assegnazione Tag Automatici disabilitata")
             print(f"<<< Lista completa: {self.query_tags.get('all_tags', [])}")
+
+    ### Inserimento Query Pre-Determinate
+    def add_predetermined_query(
+        self,
+        query_text: str,
+        query_id: Optional[str] = None,
+        tags: Optional[List[str]] = None,
+    ) -> str:
+        """
+        Aggiunge una singola query pre-determinata salvando testo ed embedding nel Sidecar.
+        """
+        return add_predetermined_query(
+            query_text=query_text,
+            sidecar_manager=self.sidecar_manager,
+            query_id=query_id,
+            tags=tags,
+            embedder=self.embeddings,
+        )
+
+    def add_predetermined_queries_from_file(
+        self,
+        queries_path: Optional[Union[str, Path]] = None,
+    ) -> List[str]:
+        """
+        Carica e converte in batch un file JSON di query (es. eval_queries.json) 
+        salvandole come query pre-determinate nel Sidecar.
+        Se 'queries_path' non viene passato, usa 'self.queries_path'.
+        """
+        path_to_use = queries_path or self.queries_path
+        if not path_to_use:
+            logger.error("!!!> Impossibile eseguire l'importazione: nessun file fornito né impostato in self.queries_path.")
+            return []
+
+        return add_predetermined_queries_from_file(
+            queries_path=path_to_use,
+            sidecar_manager=self.sidecar_manager,
+            embedder=self.embeddings,
+        )
+
+    ### Pre-Tagging
+    def pretag_sidecar(
+        self,
+        candidate_tags: List[str],
+        sidecar_path: Optional[Union[str, Path]] = None,
+        batch_size: int = 100,
+        start_offset: Optional[Union[int, str]] = None,
+        max_chunks: Optional[int] = None,
+    ) -> None:
+        """Esegue il pre-tagging automatico della collezione salvando i tag identificati nel file sidecar specificato."""
+        logger.info(f"?> PreTagging Iniziato.")
+        if sidecar_path and Path(sidecar_path).expanduser().resolve() != self.sidecar_path:
+            resolved_path = str(Path(sidecar_path).expanduser().resolve())
+            pretagger_kwargs = {
+                "sidecar_path": resolved_path,
+                "tag_assigner": self.tag_assigner,
+                "qdrant_client": self.qdrant_client,
+            }
+        else:
+            pretagger_kwargs = {
+                "sidecar_manager": self.sidecar_manager,
+                "tag_assigner": self.tag_assigner,
+                "qdrant_client": self.qdrant_client,
+            }
+
+        with PreTagger(**pretagger_kwargs) as pretagger:
+            pretagger.run(
+                candidate_tags=candidate_tags,
+                collection_name=collection_name or COLLECTION_NAME,
+                batch_size=batch_size,
+                start_offset=start_offset,
+                max_chunks=max_chunks,
+            )
+        logger.info(f"  >>> PreTagging Terminato.")
 
     ### Retrieval vettoriale
     def run_vectorial_retrieval(self):
@@ -252,7 +357,9 @@ class PipelineHandler:
 
     ### [DEBUG] Distance Retriever
     def run_distance_retriever(self, to_retrieve: int, print_debug: Optional[bool] = False):
-        """[DEBUG] Istanzia ed esegue il distance retriever, non aggiorna la variabile di classe ma ritorna il risultato"""
+        """
+        [DEBUG] Istanzia ed esegue il distance retriever, non aggiorna la variabile di classe ma ritorna il risultato
+        """
         distance_retriever = DistanceRetriever(qdrant_client=self.qdrant_client, sidecar_manager=self.sidecar_manager)
 
         distance_retrieved_records = distance_retriever.retrieve_close(
@@ -260,7 +367,8 @@ class PipelineHandler:
                 order_by=self.order_by,
                 top_m=to_retrieve,
                 query_vector=self.query_vector,
-                query_tags=self.query_tags
+                query_tags=self.query_tags,
+                predq_id=self.predq_id
         )
 
         logger.info(f"?[DEBUG]> Distance Retriever eseguito")
@@ -281,7 +389,9 @@ class PipelineHandler:
             order_by=self.order_by,
             top_j=self.personalised_top_j,
             query_vector=self.query_vector,
-            query_tags=self.query_tags
+            query_tags=self.query_tags,
+            query_text=self.query_text,
+            embedder=self.embeddings
         )
 
         self.all_reranked = self.rerank_generic_rslt.get("final_ranked", [])
@@ -320,6 +430,19 @@ class PipelineHandler:
         builder = KnowledgeGraphBuilder()
         tag_overrides = self.sidecar_manager.load_data().get("tag_overrides", {})
         seen_chunk_ids = set()
+
+        # Aggiunta nodo della predetermined query se presente
+        if self.is_predq and self.predq_id:
+            sidecar_data = self.sidecar_manager.load_data()
+            predq_dict = sidecar_data.get("predetermined_queries", {}).get(self.predq_id, {})
+            graph_tags = predq_dict.get("graphically_assigned_tags", [])
+            builder.add_chunk_node(
+                chunk_id=self.predq_id,
+                text=f"[QUERY PRE-DETERMINATA]\n{self.query_text}",
+                vector=self.query_vector,
+                tags=graph_tags,
+            )
+            seen_chunk_ids.add(self.predq_id)
 
         for idx, rec in enumerate(records or []):
             if isinstance(rec, dict):
