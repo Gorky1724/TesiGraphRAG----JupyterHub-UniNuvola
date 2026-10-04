@@ -12,10 +12,12 @@ if str(project_root) not in sys.path:
 
 from src.sidecar_manager import SidecarManager
 from src.distance_retriever import DistanceRetriever, build_query_tags
+from src.pred_query_verifier import verify_if_pred_query
 from src.config import (
     COLLECTION_NAME,
     TAG_BOOST_ASSIGNED_CONV, TAG_BOOST_AUTO, TAG_MAX_BOOST,
-    RETRIEVAL_TOP_K, RERANKING_TOP_N
+    DISTANCE_CLASS_FACTORS
+    RETRIEVAL_TOP_K, RERANKING_TOP_N,
 )
 
 logger = logging.getLogger(__name__)
@@ -62,6 +64,7 @@ class DistanceTagReranker:
         sidecar_manager: SidecarManager,
         collection_name: str=COLLECTION_NAME,
         distance_retriever: Optional[DistanceRetriever] = None,
+        embeddings: Optional[Any] = None,
     ):
         if sidecar_manager is None:
             raise ValueError("!!!>>> sidecar_manager è obbligatorio e non può essere None.")
@@ -71,6 +74,7 @@ class DistanceTagReranker:
         self.qdrant_client = qdrant_client
         self.collection_name = collection_name
         self.sidecar_manager = sidecar_manager
+        self.embedder = embeddings
         self.distance_retriever = distance_retriever or (
             DistanceRetriever(
                 qdrant_client=qdrant_client,
@@ -87,12 +91,16 @@ class DistanceTagReranker:
         query_vector: Union[List[float], np.ndarray],
         query_tags: Dict[str, List[str]],
         distance_retrieved_records: Optional[List[Dict[str, Any]]] = None,
-        top_m: Optional[int]= None
+        top_m: Optional[int]= None,
+        query_text: Optional[str] = None,
+        embedder: Optional[Any] = None
     ) -> Dict[str, List[Dict[str, Any]]]:
         """
         Esegue il reranking dividendo in 4 categorie, distintamente rioridnate secondo i criteri di ORDER_BY e restituisce
         i TOP_J post-reorder.
-        Tra di questi, se c'è posto, ci sono i TOP_M recurati tramite il distance_retriever.
+        Se stiamo analizzando una query pre-determinata, allora si aggiunge al final score il fattore moltiplicativo
+        della DistanceClass del chunk in analisi dalla query - vale per tutte e 4 le categorie, indipendentemente dai criteri di order_by
+        Tra di questi, se c'è posto, ci sono i TOP_M recuperati tramite il distance_retriever.
 
         Args:
             retrieved_points: Punti recuperati da Qdrant tramite retrieval vettoriale.
@@ -119,6 +127,8 @@ class DistanceTagReranker:
                         {"conversation_tags": [...], "assigned_tags": [...],
                          "automatic_tags": [...], "all_tags": [...]}.
             top_m: Eventuale valore di override di quello calcolato nel metodo che impone un numero massimo di vicini da recuperare e restituire.
+            query_text: Se passato si abilita il confronto del testo con le query pre-determinate e la loro gestione nel reranking
+            embedder: Il modello di embedding da utilizzare per il confronto di query_text con quelle pre-determinate.
 
         Returns:
             Dizionario con
@@ -138,13 +148,39 @@ class DistanceTagReranker:
             logger.warning("!>> Reranking annullato per il valore di TOP_J non valido: %s", top_j)
             return empty_response
 
-        # Rimozione eventuali tag duplicati nelle gerarchie inferiori
-        query_tags = query_tags or {} # se dovesse essere vuoto
-        query_tags = build_query_tags(
-            conversation_tags=query_tags.get("conversation_tags", []),
-            assigned_tags=query_tags.get("assigned_tags", []),
-            automatic_tags=query_tags.get("automatic_tags", []),
-        )
+        # Controllo predq-reranker
+        predq = False
+        predq_id, predq_data = None, None
+        if query_text:
+            embeddings = embedder or self.embedder
+            predq_id, predq_data = verify_if_pred_query(
+                query_text=query_text,
+                sidecar_manager=self.sidecar_manager,
+                query_vector=query_vector,
+                embedder=embeddings
+            )
+            if predq_id:
+                predq = True
+
+
+        # Rimozione eventuali tag duplicati nelle gerarchie inferiori tramite build_query_tags
+        query_tags = query_tags or {} # fallback per sicurezza a dict vuoto
+        if predq and predq_data:
+            # Aggiornamento query_tags con i tag assegnati graficamente alla pred_query
+            pred_ass_tags = pred_data.get("graphically_assigned_tags") or []
+            combined_ass_tags = list(set(query_tags.get("assigned_tags", []) + pred_ass_tags))
+
+            query_tags = build_query_tags(
+                conversation_tags=query_tags.get("conversation_tags", []),
+                assigned_tags=combined_ass_tags,
+                automatic_tags=query_tags.get("automatic_tags", [])
+            )
+        else:
+            query_tags = build_query_tags(
+                conversation_tags=query_tags.get("conversation_tags", []),
+                assigned_tags=query_tags.get("assigned_tags", []),
+                automatic_tags=query_tags.get("automatic_tags", []),
+            )
 
         # Normalizzazione flag di order_by
         order_by_to_upper = [str(item).upper().strip() for item in (order_by or []) if item]
@@ -215,8 +251,16 @@ class DistanceTagReranker:
                 if total_bonus > 0:
                     tag_alteration = 1.0 + min(total_bonus, TAG_MAX_BOOST)
 
+            # Moltiplicatore VICINANZA a query pre-determinata
+            predq_alteration = 1.0
+            if predq:
+                predq_adj = predq_data.get("adjacencies") or {}
+                if chunk_id in predq_adj:
+                    d_class = predq_adj[chunk_id].get("distance_class", "INVARIATI")
+                    predq_alteration = DISTANCE_CLASS_FACTORS.get(d_class, 1.0)
+
             # Punteggio finale
-            raw_final_score = initial_score * dist_factor * tag_alteration
+            raw_final_score = initial_score * dist_factor * tag_alteration * predq_alteration
 
             candidate_item = {
                 "chunk_id": chunk_id,
@@ -224,14 +268,14 @@ class DistanceTagReranker:
                 "initial_score": round(initial_score, 4),
                 "dist_factor": round(dist_factor, 3),
                 "tag_alteration": round(tag_alteration, 3),
+                "predq_alteration": round(predq_alteration, 3),
                 "final_score": round(raw_final_score, 4),
                 "_raw_final_score": raw_final_score,
                 "source_retrieval": "vectorial_retriever",
                 "category": 1 if has_all_conv_tag else 4,
                 "vector": chunk_vector,
                 "payload": payload,
-                "chunk_tags": chunk_tags,
-                "matched_tags": matched_all,
+                "chunk_tags": chunk_tags
             }
 
             if has_all_conv_tag:
@@ -257,6 +301,7 @@ class DistanceTagReranker:
                         top_m=effective_top_m,
                         query_vector=query_vector,
                         query_tags=query_tags,
+                        predq_id=predq_id if predq else None
                     )
 
         ### Sorting dei candidati per categorie 1 e 4 (2 e 3 già ordinate da retrieve_close())
@@ -288,7 +333,9 @@ class DistanceTagReranker:
         query_vector: Union[List[float], np.ndarray],
         query_tags: Dict[str, List[str]],
         distance_retrieved_records: Optional[List[Dict[str, Any]]] = None,
-        top_m: Optional[int]= None
+        top_m: Optional[int]= None,
+        query_text: Optional[str] = None,
+        embedder: Optional[Any] = None
     ) -> List[Dict[str, Any]]:
         """
         Wrapper di generic_rerank() che returna di default solo i TOP_J records
@@ -301,6 +348,8 @@ class DistanceTagReranker:
             query_tags=query_tags,
             distance_retrieved_records=distance_retrieved_records,
             top_m=top_m,
+            query_text=query_text,
+            embedder=embedder
         )
         return rrnk_rslt.get("top_j_ranked", [])
 
@@ -312,7 +361,9 @@ class DistanceTagReranker:
         query_tags: Dict[str, List[str]],
         top_k: int=RETRIEVAL_TOP_K,
         distance_retrieved_records: Optional[List[Dict[str, Any]]] = None,
-        top_m: Optional[int]= None
+        top_m: Optional[int]= None,
+        query_text: Optional[str] = None,
+        embedder: Optional[Any] = None
     ) -> List[Dict[str, Any]]:
         """
         Wrapper di generic_rerank() che returna di default solo src.config.RETRIEVAL_TOP_K records
@@ -325,6 +376,8 @@ class DistanceTagReranker:
             query_tags=query_tags,
             distance_retrieved_records=distance_retrieved_records,
             top_m=top_m,
+            query_text=query_text,
+            embedder=embedder
         )
 
     def rerank(
@@ -335,7 +388,9 @@ class DistanceTagReranker:
         query_tags: Dict[str, List[str]],
         top_n: int=RERANKING_TOP_N,
         distance_retrieved_records: Optional[List[Dict[str, Any]]] = None,
-        top_m: Optional[int]= None
+        top_m: Optional[int]= None,
+        query_text: Optional[str] = None,
+        embedder: Optional[Any] = None
     ) -> List[Dict[str, Any]]:
         """
         Wrapper di generic_rerank() che returna di default solo src.config.RERANKING_TOP_N records
@@ -348,5 +403,6 @@ class DistanceTagReranker:
             query_tags=query_tags,
             distance_retrieved_records=distance_retrieved_records,
             top_m=top_m,
+            query_text=query_text,
+            embedder=embedder
         )
-

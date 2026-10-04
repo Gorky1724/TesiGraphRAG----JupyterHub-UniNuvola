@@ -100,7 +100,8 @@ class SidecarManager:
         default_structure = {
             "modified_adjacencies": {},
             "tag_overrides": {},
-            "global_tags": {}
+            "global_tags": {},
+            "predetermined_queries": {}
         }
         self._cache = default_structure
         return copy.deepcopy(self._cache)
@@ -148,20 +149,25 @@ class SidecarManager:
         Salva o aggiorna la classe di distanza tra una coppia di chunk.
         Garantisce simmetria (chunk_1 <-> chunk_2) e pulizia automatica se la classe
         dovesse essere "INVARIATI" o non presente in DISTANCE_CLASS_FACTORS.
+        Reindirizza automaticamente a save_predetermined_query_adjacency se uno degli ID riguarda una query pre-determinata
         """
         c1, c2 = str(chunk_id_1), str(chunk_id_2)
         if c1 == c2:
             return
 
+        # Instradamento automatico verso le query pre-determinate
+        if c1.startswith("predq_") or c2.startswith("predq_"):
+            self.save_predetermined_query_adjacency(c1, c2, distance_class)
+            return
+
         data = self.load_data()
-        adj = data.setdefault("modified_adjacencies", {}) # Recupera valore associato alla chiave
+        adj = data.setdefault("modified_adjacencies", {})
 
         norm_class = str(distance_class).upper().strip() if distance_class is not None else "INVARIATI"
         if norm_class not in DISTANCE_CLASS_FACTORS:
             norm_class = "INVARIATI"
 
         if norm_class == "INVARIATI":
-            # Pulizia automatica; rimozione voce mantiene .json più leggero possibile
             if c1 in adj and c2 in adj[c1]:
                 del adj[c1][c2]
                 if not adj[c1]:
@@ -174,7 +180,6 @@ class SidecarManager:
 
             print(f"<<| Adiacenza rimossa (ripristino a INVARIATI) tra [{c1}] e [{c2}] |>>")
         else:
-             # Assegnazione simmetrica
             adj.setdefault(c1, {})[c2] = {"distance_class": norm_class}
             adj.setdefault(c2, {})[c1] = {"distance_class": norm_class}
             print(f"<<| Modifica adiacenza salvata tra [{c1}] e [{c2}]: classe={norm_class} |>>")
@@ -185,43 +190,60 @@ class SidecarManager:
         """
         Salva un blocco di modifiche adiacenze in un'unica operazione di I/O.
         Ogni voce di 'edits' deve contenere: 'chunk_1', 'chunk_2', 'distance_class'.
+        Smista automaticamente gli elementi coinvolgenti 'predq_' al relativo batch dedicato.
         """
         if not edits or not isinstance(edits, list):
+            return
+
+        standard_edits = []
+        predq_edits = []
+
+        for edit in edits:
+            if edit and "chunk_1" in edit and "chunk_2" in edit:
+                c1, c2 = str(edit["chunk_1"]), str(edit["chunk_2"])
+                if c1.startswith("predq_") or c2.startswith("predq_"):
+                    predq_edits.append(edit)
+                else:
+                    standard_edits.append(edit)
+
+        # Esegue prima l'eventuale sotto-batch per le query pre-determinate
+        if predq_edits:
+            self.save_predetermined_query_adjacencies_batch(predq_edits)
+
+        if not standard_edits:
             return
 
         data = self.load_data()
         adj = data.setdefault("modified_adjacencies", {})
         updated = False
 
-        for edit in edits:
-            if edit and "chunk_1" in edit and "chunk_2" in edit:
-                c1, c2 = str(edit["chunk_1"]), str(edit["chunk_2"])
-                if c1 == c2:
-                    continue
-                d_cls = edit.get("distance_class")
-                norm_class = str(d_cls).upper().strip() if d_cls is not None else "INVARIATI"
+        for edit in standard_edits:
+            c1, c2 = str(edit["chunk_1"]), str(edit["chunk_2"])
+            if c1 == c2:
+                continue
+            d_cls = edit.get("distance_class")
+            norm_class = str(d_cls).upper().strip() if d_cls is not None else "INVARIATI"
 
-                if norm_class not in DISTANCE_CLASS_FACTORS:
-                    norm_class = "INVARIATI"
+            if norm_class not in DISTANCE_CLASS_FACTORS:
+                norm_class = "INVARIATI"
 
-                if norm_class == "INVARIATI":
-                    if c1 in adj and c2 in adj[c1]:
-                        del adj[c1][c2]
-                        if not adj[c1]:
-                            del adj[c1]
-                    if c2 in adj and c1 in adj[c2]:
-                        del adj[c2][c1]
-                        if not adj[c2]:
-                            del adj[c2]
-                else:
-                    adj.setdefault(c1, {})[c2] = {"distance_class": norm_class}
-                    adj.setdefault(c2, {})[c1] = {"distance_class": norm_class}
-                updated = True
+            if norm_class == "INVARIATI":
+                if c1 in adj and c2 in adj[c1]:
+                    del adj[c1][c2]
+                    if not adj[c1]:
+                        del adj[c1]
+                if c2 in adj and c1 in adj[c2]:
+                    del adj[c2][c1]
+                    if not adj[c2]:
+                        del adj[c2]
+            else:
+                adj.setdefault(c1, {})[c2] = {"distance_class": norm_class}
+                adj.setdefault(c2, {})[c1] = {"distance_class": norm_class}
+            updated = True
 
         if updated:
             self.save_data(data)
-            print(f"<<| Batch adiacenze salvato: {len(edits)} elementi processati |>>")
-
+            print(f"<<| Batch adiacenze standard salvato: {len(standard_edits)} elementi processati |>>")
     # Estrazione adiacenze
     def get_chunk_adjacencies(self, chunk_id: str) -> Dict[str, Dict[str, str]]:
         """
@@ -238,57 +260,22 @@ class SidecarManager:
         return data.get("modified_adjacencies", {})
 
     ### Manipolazione TAG
-    def add_tag_override(self, chunk_id: str, tag: str, color: str=None):
+    def add_tag_override(self, chunk_id: str, tag: str, color: Optional[str] = None):
         """
-        Aggiunge un tag a un chunk, assegna un colore e aggiorna il registro globale
+        Aggiunge un singolo tag a un chunk o a una query pre-determinata.
+        Aggiorna global_tags SOLO per i chunk standard del database.
         """
-        data = self.load_data()
-        chunk_id = str(chunk_id)
-
-        if "tag_overrides" not in data:
-            data["tag_overrides"] = {}
-        if "global_tags" not in data:
-            data["global_tags"] = {}
-
-        if chunk_id not in data["tag_overrides"]:
-            data["tag_overrides"][chunk_id] = {"user_tags": []}
-
-        current_tags = data["tag_overrides"][chunk_id].get("user_tags", [])
-
-        # Aggiunge il tag solo se non già presente
-        if tag not in current_tags:
-            current_tags.append(tag)
-            data["tag_overrides"][chunk_id]["user_tags"] = current_tags
-
-            # Aggiorna il registro globale
-            if tag not in data["global_tags"]:
-                # Se color=None si assegna un colore tra quelli di default
-                if not color:
-                    used_colors = {
-                        t_info.get("color")
-                        for t_info in data["global_tags"].values()
-                        if isinstance(t_info, dict)
-                    }
-                    available = [c for c in self.DEFAULT_PALETTE if c not in used_colors]
-                    color = (
-                        available[0]
-                        if available
-                        else self.DEFAULT_PALETTE[len(data["global_tags"]) % len(self.DEFAULT_PALETTE)]
-                    ) # Gestione ciclica array
-                data["global_tags"][tag] = {"count": 1, "color": color}
-            else:
-                data["global_tags"][tag]["count"] += 1
-                if color: # Aggiornamento colore se esplicitamente fornito
-                    data["global_tags"][tag]["color"] = color
-
-            self.save_data(data)
-            print(f"<<! Tag '{tag}' ({data['global_tags'][tag]['color']}) aggiunto a [{chunk_id}]. Conteggio globale: {data['global_tags'][tag]['count']}")
+        if not tag:
+            return
+        self.add_tag_override_for_chunk(chunk_id, [tag])
 
     def add_tag_override_for_chunk(self, chunk_id: str, tags: List[str]):
         """
-        Assegna una lista di tag a un singolo chunk, aggiornando il registro globale
+        Assegna una lista di tag a un singolo chunk o a una query pre-determinata, aggiornando il registro globale
         ed eseguendo un uica operazione di scrittura su disco per l'intero chunk.
         Da utilizzare ad esempio per il pre-tagging, ottimizzando così l'operazione.
+        Usato anche nel singolo tag_override per centralizzare l'operazione.
+        Aggiorna global_tags SOLO per i chunk del database.
         """
         if not tags:
             return
@@ -296,40 +283,55 @@ class SidecarManager:
         data = self.load_data()
         chunk_id = str(chunk_id)
 
-        if "tag_overrides" not in data:
-            data["tag_overrides"] = {}
+        # Gestione Query Pre-Determinata (NON tocca global_tags)
+        #  I tag graficamente aggiunti, sono considerati assigned_tags; conv_tags e auto_tags non possono essere manipolati.
+        if chunk_id.startswith("predq_"):
+            pred_queries = data.setdefault("predetermined_queries", {})
+            query_entry = pred_queries.setdefault(chunk_id, {})
+            current_tags = query_entry.setdefault("graphically_assigned_tags", [])
+
+            updated = False
+            for t in tags:
+                if t not in current_tags:
+                    current_tags.append(t)
+                    updated = True
+
+            if updated:
+                self.save_data(data)
+            return
+
+        # Gestione Chunk Standard del Database
         if "global_tags" not in data:
             data["global_tags"] = {}
+        if "tag_overrides" not in data:
+            data["tag_overrides"] = {}
 
         if chunk_id not in data["tag_overrides"]:
             data["tag_overrides"][chunk_id] = {"user_tags": []}
 
-        current_tags = data["tag_overrides"][chunk_id].get("user_tags", [])
-        updated = False
+        current_tags = data["tag_overrides"][chunk_id].setdefault("user_tags", [])
 
-        for tag in tags:
-            if tag not in current_tags:
-                current_tags.append(tag)
+        updated = False
+        for t in tags:
+            if t not in current_tags:
+                current_tags.append(t)
                 updated = True
 
-                if tag not in data["global_tags"]:
+                if t not in data["global_tags"]:
                     used_colors = {
-                        t_info.get("color")
-                        for t_info in data["global_tags"].values()
+                        t_info.get("color") for t_info in data["global_tags"].values()
                         if isinstance(t_info, dict)
                     }
                     available = [c for c in self.DEFAULT_PALETTE if c not in used_colors]
-                    color = (
-                        available[0]
-                        if available
+                    col = (
+                        available[0] if available
                         else self.DEFAULT_PALETTE[len(data["global_tags"]) % len(self.DEFAULT_PALETTE)]
                     )
-                    data["global_tags"][tag] = {"count": 1, "color": color}
+                    data["global_tags"][t] = {"count": 1, "color": col}
                 else:
-                    data["global_tags"][tag]["count"] += 1
+                    data["global_tags"][t]["count"] += 1
 
         if updated:
-            data["tag_overrides"][chunk_id]["user_tags"] = current_tags
             self.save_data(data)
 
     def add_tag_overrides_batch(self, chunk_tags_map: Dict[str, List[str]]) -> None:
@@ -352,64 +354,82 @@ class SidecarManager:
             if not tags:
                 continue
 
-            chunk_id = str(chunk_id)
+            cid_str = str(chunk_id)
 
-            if chunk_id not in data["tag_overrides"]:
-                data["tag_overrides"][chunk_id] = {"user_tags": []}
+            # Ramo Query Pre-Determinata
+            if cid_str.startswith("predq_"):
+                pred_queries = data.setdefault("predetermined_queries", {})
+                query_entry = pred_queries.setdefault(cid_str, {})
+                current_tags = query_entry.setdefault("graphically_assigned_tags", [])
 
-            # Recupero sicuro di user_tags
-            current_tags = data["tag_overrides"][chunk_id].setdefault("user_tags", [])
+                for t in tags:
+                    if t not in current_tags:
+                        current_tags.append(t)
+                        updated = True
+                continue
 
-            for tag in tags:
-                if tag not in current_tags:
-                    current_tags.append(tag)
+            # Ramo Chunk Standard
+            if cid_str not in data["tag_overrides"]:
+                data["tag_overrides"][cid_str] = {"user_tags": []}
+
+            current_tags = data["tag_overrides"][cid_str].setdefault("user_tags", [])
+
+            for t in tags:
+                if t not in current_tags:
+                    current_tags.append(t)
                     updated = True
 
-                    if tag not in data["global_tags"]:
+                    if t not in data["global_tags"]:
                         used_colors = {
-                            t.get("color") for t in data["global_tags"].values()
-                            if isinstance(t, dict)
+                            t_info.get("color") for t_info in data["global_tags"].values()
+                            if isinstance(t_info, dict)
                         }
                         available = [c for c in self.DEFAULT_PALETTE if c not in used_colors]
-                        color = (
+                        col = (
                             available[0] if available
                             else self.DEFAULT_PALETTE[len(data["global_tags"]) % len(self.DEFAULT_PALETTE)]
                         )
-                        data["global_tags"][tag] = {"count": 1, "color": color}
+                        data["global_tags"][t] = {"count": 1, "color": col}
                     else:
-                        data["global_tags"][tag]["count"] += 1
+                        data["global_tags"][t]["count"] += 1
 
         if updated:
             self.save_data(data)
 
     def remove_tag_override(self, chunk_id: str, tag: str):
         """
-        Rimuove un tag da un chunk, decrementando il contatore globale.
+        Rimuove un tag da un chunk o da una query pre-determinata, decrementando il contatore globale.
         Se questo scende a 0, rimuove il tag da tale registro globale.
+        Decrementa global_tags SOLO per i chunk del database.
         """
         data = self.load_data()
         chunk_id = str(chunk_id)
 
+        # Rimozione da Query Pre-Determinata
+        if chunk_id.startswith("predq_"):
+            pred_queries = data.get("predetermined_queries", {})
+            if chunk_id in pred_queries:
+                current_tags = pred_queries[chunk_id].get("graphically_assigned_tags", [])
+                if tag in current_tags:
+                    current_tags.remove(tag)
+                    self.save_data(data)
+            return
+
+        # Rimozione da Chunk Standard
+        tag_removed = False
         if "tag_overrides" in data and chunk_id in data["tag_overrides"]:
             current_tags = data["tag_overrides"][chunk_id].get("user_tags", [])
             if tag in current_tags:
                 current_tags.remove(tag)
-                data["tag_overrides"][chunk_id]["user_tags"] = current_tags
-
-                # Rimuove la voce "tag_overrides" se non presente alcun tag
+                tag_removed = True
                 if not current_tags:
                     del data["tag_overrides"][chunk_id]
 
-                # Decrementa registro, rimuovendo la voce se necessario
-                if "global_tags" in data and tag in data["global_tags"]:
-                    data["global_tags"][tag]["count"] -= 1
-                    if data["global_tags"][tag]["count"] <= 0:
-                        del data["global_tags"][tag]
-                        print(f"X>> Tag '{tag}' rimosso definitivamente dal registro globale (conteggio = 0).")
-                    else:
-                        print(f"<<| Tag '{tag}' rimosso da [{chunk_id}]. Conteggio residuo: {data['global_tags'][tag]['count']}")
-
-                self.save_data(data)
+        if tag_removed and "global_tags" in data and tag in data["global_tags"]:
+            data["global_tags"][tag]["count"] -= 1
+            if data["global_tags"][tag]["count"] <= 0:
+                del data["global_tags"][tag]
+            self.save_data(data)
 
     ### RESET file sidecar
     def reset_all(self):
@@ -417,6 +437,107 @@ class SidecarManager:
         self.save_data({
             "modified_adjacencies": {},
             "tag_overrides": {},
-            "global_tags": {}
+            "global_tags": {},
+            "predetermined_queries": {}
         })
         print("<<! File sidecar ripristinato allo stato iniziale !>>")
+
+    ### Gestione Query Pre-Determinate
+    # Estrazione dati
+    def get_predetermined_queries(self) -> Dict[str, Dict[str, Any]]:
+        """Restituisce l'intero dizionario delle query pre-determinate salvate."""
+        data = self.load_data()
+        return data.get("predetermined_queries", {})
+
+    def get_predetermined_query(self, pred_query_id: str) -> Dict[str, Any]:
+        """Restituisce i dati e le adiacenze per una specifica query pre-determinata."""
+        queries = self.get_predetermined_queries() or {}
+        return queries.get(str(pred_query_id), {})
+
+    def get_predetermined_query_adjacencies(self, pred_query_id: str) -> Dict[str, Dict[str, str]]:
+        """
+        Restituisce il dizionario delle adiacenze modificate per una specifica query pre-determinata.
+        Format di ritorno:
+        {'chunk_12': {'distance_class': 'AVVICINATI'}}
+        """
+        query_entry = self.get_predetermined_query(pred_query_id)
+        return query_entry.get("adjacencies", {})
+
+    # Salvataggio adiacenze
+    def save_predetermined_query_adjacency(self, chunk_id_1: str, chunk_id_2: str, distance_class: Optional[str]):
+        """
+        Salva o aggiorna l'adiacenza tra una query pre-determinata (ID con prefisso 'predq_') e un chunk.
+        Se la classe e' INVARIATI, rimuove la voce dal JSON.
+        """
+        c1, c2 = str(chunk_id_1), str(chunk_id_2)
+        if c1 == c2:
+            return
+
+        if c1.startswith("predq_"):
+            pred_id, target_chunk = c1, c2
+        elif c2.startswith("predq_"):
+            pred_id, target_chunk = c2, c1
+        else:
+            self.save_pairwise_class_edits(c1, c2, distance_class)
+            return
+
+        data = self.load_data()
+        pred_queries = data.setdefault("predetermined_queries", {})
+        query_entry = pred_queries.setdefault(pred_id, {"adjacencies": {}, "graphically_assigned_tags": []})
+        adj = query_entry.setdefault("adjacencies", {})
+
+        norm_class = str(distance_class).upper().strip() if distance_class is not None else "INVARIATI"
+        if norm_class not in DISTANCE_CLASS_FACTORS:
+            norm_class = "INVARIATI"
+
+        if norm_class == "INVARIATI":
+            if target_chunk in adj:
+                del adj[target_chunk]
+            print(f"<<| Adiacenza query pre-determinata rimossa (INVARIATI) tra [{pred_id}] e [{target_chunk}] |>>")
+        else:
+            adj[target_chunk] = {"distance_class": norm_class}
+            print(f"<<| Modifica adiacenza query pre-determinata salvata tra [{pred_id}] e [{target_chunk}]: classe={norm_class} |>>")
+
+        self.save_data(data)
+
+    def save_predetermined_query_adjacencies_batch(self, edits: List[Dict[str, Any]]):
+        """Salva un blocco di modifiche di adiacenza per query pre-determinate in un'unica operazione di I/O."""
+        if not edits or not isinstance(edits, list):
+            return
+
+        data = self.load_data()
+        pred_queries = data.setdefault("predetermined_queries", {})
+        updated = False
+
+        for edit in edits:
+            if not edit or "chunk_1" not in edit or "chunk_2" not in edit:
+                continue
+            c1, c2 = str(edit["chunk_1"]), str(edit["chunk_2"])
+            if c1 == c2:
+                continue
+
+            if c1.startswith("predq_"):
+                pred_id, target_chunk = c1, c2
+            elif c2.startswith("predq_"):
+                pred_id, target_chunk = c2, c1
+            else:
+                continue
+
+            query_entry = pred_queries.setdefault(pred_id, {"adjacencies": {}, "graphically_assigned_tags": []})
+            adj = query_entry.setdefault("adjacencies", {})
+
+            d_cls = edit.get("distance_class")
+            norm_class = str(d_cls).upper().strip() if d_cls is not None else "INVARIATI"
+            if norm_class not in DISTANCE_CLASS_FACTORS:
+                norm_class = "INVARIATI"
+
+            if norm_class == "INVARIATI":
+                if target_chunk in adj:
+                    del adj[target_chunk]
+            else:
+                adj[target_chunk] = {"distance_class": norm_class}
+            updated = True
+
+        if updated:
+            self.save_data(data)
+            print(f"<<| Batch adiacenze query pre-determinate salvato: {len(edits)} elementi processati |>>")

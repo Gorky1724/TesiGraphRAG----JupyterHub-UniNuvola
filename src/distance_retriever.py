@@ -36,7 +36,8 @@ def build_query_tags(
     assigned_tags: Optional[List[str]] = None,
     automatic_tags: Optional[List[str]] = None,
 ) -> Dict[str, List[str]]:
-    """Costruisce il dizionario query_tags garantendo la disgiunzione gerarchica dei tag:
+    """
+    Costruisce il dizionario query_tags garantendo la disgiunzione gerarchica dei tag:
     conversation_tags > assigned_tags > automatic_tags.
     """
     seen = set()
@@ -96,7 +97,8 @@ class DistanceRetriever:
         order_by: List[str],
         top_m: int,
         query_vector: Union[List[float], np.ndarray],
-        query_tags: Dict[str, List[str]]
+        query_tags: Dict[str, List[str]],
+        predq_id: Optional[str] = None
     ) -> List[Dict[str, Any]]:
         """Esegue il retrieval su base di distanza e calcola il final_score per tutti i candidati adiacenti.
 
@@ -112,18 +114,23 @@ class DistanceRetriever:
             query_tags: Dizionario contenente i tag della query divisi per categoria:
                         {"conversation_tags": [...], "assigned_tags": [...],
                          "automatic_tags": [...], "all_tags": [...]}.
+                        Se presente il predq_id, si presuppone che i graphically_assigned_tags siano già stati aggiunti.
+            predq_id: l'ID della query pre-determinata che sta venendo eseguita (o la cui query posta era simile).
+                      Se presente, vuol dire che stiamo analizzando una query pre-determinata. Se assente, la query è una qualunque.
+                      Si considera nel calcolo del final_anche il DistanceFactor chunk-query, indipendentemente dal valore di order_by
+                      La suddivisione in categorie non cambia, viene solo cambiato il punteggio interno.
 
         Returns:
             Lista di dizionari descrittivi con final_score calcolato e ordinati per categorie e in modo decrescente.
         """
-        if not to_analyze or query_vector is None:
+        if (not to_analyze and not predq_id) or query_vector is None:
             return []
 
         if top_m is None or top_m <= 0:
             logger.warning("!>> Distance Retrieval annullato per il valore di TOP_M non valido: %s", top_m)
             return []
 
-        # Rimozione eventuali tag duplicati nelle gerarchie inferiori
+        # Rimozione eventuali tag duplicati nelle gerarchie inferiori -- 
         query_tags = query_tags or {} # se dovesse essere vuoto
         query_tags = build_query_tags(
             conversation_tags=query_tags.get("conversation_tags", []),
@@ -137,6 +144,7 @@ class DistanceRetriever:
         sidecar_data = self.sidecar_manager.load_data()
         modified_adjacencies = sidecar_data.get("modified_adjacencies", {})
         tag_overrides = sidecar_data.get("tag_overrides", {})
+        pred_queries = sidecar_data.get("predetermined_queries", {})
 
         # ID dei chunk da analizzare per evitare duplicazioni
         seen_ids = set()
@@ -174,6 +182,8 @@ class DistanceRetriever:
 
         # Mappatura adiacenze
         candidate_neighbors: Dict[str, Dict[str, Any]] = {}
+
+        # Vicini a to_analyze
         for cid in seen_ids:
             if cid in modified_adjacencies:
                 neighbors = modified_adjacencies[cid]
@@ -182,11 +192,34 @@ class DistanceRetriever:
                         d_class = info.get("distance_class", "INVARIATI")
                         if d_class in ["AVVICINATI", "MOLTO_AVVICINATI"]:
                             factor = DISTANCE_CLASS_FACTORS.get(d_class, 1.0)
+                            # Prendiamo dist_factor massimo trai possibili
                             if neighbor_id not in candidate_neighbors or factor > candidate_neighbors[neighbor_id]["distance_factor"]:
                                 candidate_neighbors[neighbor_id] = {
                                     "distance_class": d_class,
                                     "distance_factor": factor,
+                                    "predq_alteration": 1.0
                                 }
+
+        # Vicini alla pred-query (se presente)
+        if predq_id and predq_id in pred_queries:
+            predq_data = pred_queries[predq_id] or {}
+            predq_adj = predq_data.get("adjacencies") or {}
+            for neighbor_id, info in predq_adj.items():
+                if neighbor_id not in seen_ids:
+                    d_class = info.get("distance_class", "INVARIATI")
+                    if d_class in ["AVVICINATI", "MOLTO_AVVICINATI"]:
+                        factor = DISTANCE_CLASS_FACTORS.get(d_class, 1.0)
+                        if neighbor_id not in candidate_neighbors:
+                            candidate_neighbors[neighbor_id] = {
+                                "distance_class": d_class,
+                                "distance_factor": 1.0,
+                                "predq_alteration": factor
+                            }
+                        else:
+                            existing_predq_factor = candidate_neighbors[neighbor_id].get("predq_alteration", 1.0)
+                            if factor > existing_predq_factor:
+                                candidate_neighbors[neighbor_id]["predq_alteration"] = factor
+
 
         if not candidate_neighbors:
             return []
@@ -265,10 +298,11 @@ class DistanceRetriever:
             if cos_score < MIN_COSINE_THRESHOLD:
                 continue
 
+            neighbor_info = candidate_neighbors.get(chunk_id, {})
+
             # Moltiplicatore su base Distance Class
             dist_factor = 1.0
             if "DIST" in order_by_to_upper:
-                neighbor_info = candidate_neighbors.get(chunk_id, {})
                 dist_factor = float(neighbor_info.get("distance_factor", 1.0))
 
             tag_alteration = 1.0
@@ -291,8 +325,13 @@ class DistanceRetriever:
                 if total_bonus > 0:
                     tag_alteration = 1.0 + min(total_bonus, TAG_MAX_BOOST)
 
+            # Moltiplicatore VICINANZA a query pre-determinata
+            predq_alteration = 1.0
+            if predq_id:
+                predq_alteration = float(neighbor_info.get("predq_alteration", 1.0))
+
             # Punteggio finale
-            raw_final_score = cos_score * dist_factor * tag_alteration
+            raw_final_score = cos_score * dist_factor * tag_alteration * predq_alteration
 
             candidate_data = {
                 "chunk_id": chunk_id,
@@ -300,14 +339,14 @@ class DistanceRetriever:
                 "initial_score": round(cos_score, 4),
                 "dist_factor": round(dist_factor, 3),
                 "tag_alteration": round(tag_alteration, 3),
+                "predq_alteration": round(predq_alteration, 3),
                 "final_score": round(raw_final_score, 4),
                 "_raw_final_score": raw_final_score,
                 "source_retrieval": "distance_retriever",
                 "category": 2 if has_all_conv_tag else 3,
                 "vector": chunk_vector,
                 "payload": payload,
-                "chunk_tags": chunk_tags,
-                "matched_tags": matched_all,
+                "chunk_tags": chunk_tags
             }
 
             if has_all_conv_tag:
@@ -325,3 +364,4 @@ class DistanceRetriever:
             del item["_raw_final_score"]
 
         return prioritized_candidates[:top_m]
+
