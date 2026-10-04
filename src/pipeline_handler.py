@@ -41,7 +41,7 @@ from src.tag_assigner import TagAssigner
 
 from src.distance_retriever import DistanceRetriever, build_query_tags
 from src.distance_tag_reranker import DistanceTagReranker
-from src.pred_query_verifier import (
+from src.predetermined_query_handling_methods import (
     verify_if_pred_query,
     add_predetermined_query,
     add_predetermined_queries_from_file
@@ -200,6 +200,7 @@ class PipelineHandler:
             self.is_predq = True
             self.predq_id = pdid
             self.predq_data = pddt
+            logger.info(f"   >>> Query: <| {self.query_text} |> ricondotta a <| {self.predq_data.get("query_text", "predq-text-not-found")} |> ")
         else:
             self.is_predq = False
             self.predq_id = None
@@ -330,7 +331,7 @@ class PipelineHandler:
         with PreTagger(**pretagger_kwargs) as pretagger:
             pretagger.run(
                 candidate_tags=candidate_tags,
-                collection_name=collection_name or COLLECTION_NAME,
+                collection_name= COLLECTION_NAME,
                 batch_size=batch_size,
                 start_offset=start_offset,
                 max_chunks=max_chunks,
@@ -404,6 +405,7 @@ class PipelineHandler:
             for r in self.all_reranked:
                 print(f"    >>> cid: {[r.get('chunk_id', 'not-found')]}")
                 print(f"        |> category: {[r.get('category', 'not-found')]}")
+                print(f"           |> initial_score: {[r.get('initial_score', 'not-found')]}")
                 print(f"           |> final_score: {[r.get('final_score', 'not-found')]}")
             print("="*80)
             print(f"?> [DEBUG INFO] distance_retrieved_records:")
@@ -411,12 +413,14 @@ class PipelineHandler:
             for r in self.distance_retrieved_records:
                 print(f"    >>> cid: {[r.get('chunk_id', 'not-found')]}")
                 print(f"        |> category: {[r.get('category', 'not-found')]}")
+                print(f"           |> initial_score: {[r.get('initial_score', 'not-found')]}")
                 print(f"           |> final_score: {[r.get('final_score', 'not-found')]}")
             print("="*80)
             print(f"!>>> top_j_reranked, restituiti top_j={len(self.top_j_reranked)} ")
             for r in self.top_j_reranked:
                 print(f"    >>> cid: {[r.get('chunk_id', 'not-found')]}")
                 print(f"        |> category: {[r.get('category', 'not-found')]}")
+                print(f"           |> initial_score: {[r.get('initial_score', 'not-found')]}")
                 print(f"           |> final_score: {[r.get('final_score', 'not-found')]}")
 
     ### Visualizzazione Grafo

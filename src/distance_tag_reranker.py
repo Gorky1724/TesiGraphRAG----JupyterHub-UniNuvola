@@ -12,11 +12,11 @@ if str(project_root) not in sys.path:
 
 from src.sidecar_manager import SidecarManager
 from src.distance_retriever import DistanceRetriever, build_query_tags
-from src.pred_query_verifier import verify_if_pred_query
+from src.predetermined_query_handling_methods import verify_if_pred_query
 from src.config import (
     COLLECTION_NAME,
     TAG_BOOST_ASSIGNED_CONV, TAG_BOOST_AUTO, TAG_MAX_BOOST,
-    DISTANCE_CLASS_FACTORS
+    DISTANCE_CLASS_FACTORS,
     RETRIEVAL_TOP_K, RERANKING_TOP_N,
 )
 
@@ -167,7 +167,7 @@ class DistanceTagReranker:
         query_tags = query_tags or {} # fallback per sicurezza a dict vuoto
         if predq and predq_data:
             # Aggiornamento query_tags con i tag assegnati graficamente alla pred_query
-            pred_ass_tags = pred_data.get("graphically_assigned_tags") or []
+            pred_ass_tags = predq_data.get("graphically_assigned_tags") or []
             combined_ass_tags = list(set(query_tags.get("assigned_tags", []) + pred_ass_tags))
 
             query_tags = build_query_tags(

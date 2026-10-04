@@ -94,11 +94,13 @@ def verify_if_pred_query(
                     max_sim = sim
                     best_pred_id = pred_id
                     best_data = data
+            #logger.info(f"<[DEBUG]> sim({pred_id}, query): {sim}")
 
         if max_sim >= threshold and best_pred_id is not None:
             logger.info(f"<<| Match vettoriale trovato per Query Pre-Determinata [{best_pred_id}] con similarità {max_sim:.4f} (>= {threshold:.2f}) |>>")
             return best_pred_id, best_data
 
+    logger.info(f"<<| Nessun match vettoriale con Query Pre-Determinate trovat per la query: < {query_text} >  |>>")
     return None, None
 
 def add_predetermined_query(
