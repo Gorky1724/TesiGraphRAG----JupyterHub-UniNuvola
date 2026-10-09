@@ -549,14 +549,27 @@ class PipelineHandler:
         for idx, rec in enumerate(records_to_use, start=1):
             if isinstance(rec, dict):
                 payload = rec.get("payload", rec)
-                cid = rec.get("chunk_id", f"chunk_{idx}")
                 score = rec.get("final_score", rec.get("initial_score", 0.0))
+                cid = rec.get("chunk_id")
             else:
                 payload = getattr(rec, "payload", {}) or {}
-                cid = payload.get("chunk_id") or getattr(rec, "id", f"chunk_{idx}")
                 score = getattr(rec, "score", 0.0)
+                cid = None  # Non si usa rec.id per evitare di sovrascrivere l'ID dei metadati con l'UUID di Qdrant
 
             meta = payload.get("metadata") if isinstance(payload.get("metadata"), dict) else payload
+            doc_id = payload.get("doc_id") or meta.get("doc_id") or "doc"
+
+            raw_idx = payload.get("chunk_index") if payload.get("chunk_index") is not None else meta.get("chunk_index")
+            chunk_idx = raw_idx if raw_idx is not None else idx
+
+            # Priorità al chunk_id salvato nei metadati del payload
+            chunk_id = (
+                cid
+                or payload.get("chunk_id")
+                or meta.get("chunk_id")
+                or f"{doc_id}_chunk_{chunk_idx}"
+            )
+            
             text_content = (
                 payload.get("text")
                 or meta.get("text")
@@ -565,9 +578,9 @@ class PipelineHandler:
                 or ""
             )
 
-            chunk_ids.append(cid)
+            chunk_ids.append(chunk_id)
             context_blocks.append(
-                f"[CHUNK {idx} | ID: {cid} | Score: {score:.4f}]\n{text_content.strip()}"
+                f"[CHUNK {idx} | ID: {chunk_id} | Score: {score:.4f}]\n{text_content.strip()}"
             )
 
         full_context = "\n\n".join(context_blocks)
